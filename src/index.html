@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://i.ytimg.com; media-src 'self' file: blob:; connect-src 'self' https://api.datamuse.com https://www.youtube.com https://soundcloud.com; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://w.soundcloud.com" />
+  <title>Lemonade</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="booting">
+  <!-- Splash -->
+  <div id="splash">
+    <div class="splash-inner">
+      <div id="splash-logo"></div>
+      <div class="splash-word" id="splash-word"></div>
+      <div class="splash-sub">write · rhyme · ride the beat</div>
+    </div>
+  </div>
+
+  <div id="app">
+    <header id="titlebar">
+      <div class="tb-brand" id="tb-brand"></div>
+      <div class="tb-crumbs" id="crumbs"></div>
+      <button class="update-pill" id="update-pill" hidden><span class="i" data-icon="download"></span>Update ready</button>
+      <div class="tb-status" id="save-status"></div>
+    </header>
+
+    <div id="body">
+      <nav id="rail">
+        <button class="rail-btn active" data-view="write" title="Write (Ctrl+1)"></button>
+        <button class="rail-btn" data-view="beats" title="Beats (Ctrl+2)"></button>
+        <button class="rail-btn" data-view="dictionary" title="Word library (Ctrl+3)"></button>
+        <button class="rail-btn" data-view="archive" title="Archive (Ctrl+4)"></button>
+        <div class="rail-spacer"></div>
+        <button class="rail-btn" data-view="settings" title="Settings (Ctrl+,)"></button>
+        <div class="rail-indicator" id="rail-indicator"></div>
+      </nav>
+
+      <main id="views">
+        <!-- WRITE -->
+        <section class="view active" data-view="write">
+          <aside id="sidebar">
+            <div class="side-head">
+              <div class="search">
+                <span class="i" data-icon="search"></span>
+                <input id="lib-search" placeholder="Search lyrics…" spellcheck="false" />
+              </div>
+              <div class="side-actions">
+                <select id="sort-select" title="Sort">
+                  <option value="updated">Recent</option>
+                  <option value="name">A-Z</option>
+                  <option value="created">Created</option>
+                </select>
+                <button class="icon-btn" id="new-project" title="New project"><span class="i" data-icon="folderPlus"></span></button>
+                <button class="icon-btn accent" id="new-lyric" title="New lyric (Ctrl+N)"><span class="i" data-icon="plus"></span></button>
+              </div>
+            </div>
+            <div id="tree" class="tree"></div>
+          </aside>
+
+          <div id="editor-wrap">
+            <div id="editor-empty" class="empty">
+              <div class="empty-logo" id="empty-logo"></div>
+              <h2>Nothing open</h2>
+              <p>Pick a lyric from the left or start a fresh page.</p>
+              <button class="btn primary" id="empty-new"><span class="i" data-icon="plus"></span>New lyric</button>
+            </div>
+
+            <div id="editor-pane" hidden>
+              <div class="ed-head">
+                <input id="lyric-title" class="title-input" placeholder="Untitled" spellcheck="false" />
+                <div class="ed-tools">
+                  <div class="dropdown">
+                    <button class="btn ghost sm" id="insert-section"><span class="i" data-icon="tag"></span>Section</button>
+                    <div class="menu" id="section-menu"></div>
+                  </div>
+                  <button class="btn ghost sm" id="attach-beat" title="Attach a beat to this lyric"><span class="i" data-icon="music"></span><span id="attach-label">Beat</span></button>
+                  <div class="dropdown">
+                    <button class="icon-btn metro-btn" id="metro-btn" title="Metronome (Ctrl+M)"><span class="i" data-icon="metronome"></span><span class="metro-dot"></span></button>
+                    <div class="menu metro-menu" id="metro-menu"></div>
+                  </div>
+                  <button class="btn ghost sm" id="perform-btn" title="Perform mode: teleprompter synced to the BPM (Ctrl+P)"><span class="i" data-icon="mic"></span>Perform</button>
+                  <div class="dropdown">
+                    <button class="icon-btn" id="export-btn" title="Export"><span class="i" data-icon="download"></span></button>
+                    <div class="menu" id="export-menu">
+                      <button data-ex="txt"><span class="i" data-icon="file"></span>Text file (.txt)<span class="kbd">Ctrl+E</span></button>
+                      <button data-ex="pdf"><span class="i" data-icon="book"></span>PDF</button>
+                      <button data-ex="copy"><span class="i" data-icon="copy"></span>Copy to clipboard</button>
+                    </div>
+                  </div>
+                  <button class="icon-btn" id="focus-btn" title="Focus mode (Ctrl+Shift+F)"><span class="i" data-icon="focus"></span></button>
+                  <span class="tool-sep"></span>
+                  <button class="icon-btn" id="toggle-left" title="Toggle library (Ctrl+B)"><span class="i" data-icon="panelLeft"></span></button>
+                  <button class="icon-btn" id="toggle-right" title="Toggle side panel (Ctrl+J)"><span class="i" data-icon="panelRight"></span></button>
+                </div>
+              </div>
+              <div class="ed-meta" id="ed-meta"></div>
+              <div id="editor">
+                <div id="backdrop"><div id="backdrop-inner"></div></div>
+                <textarea id="pad" spellcheck="true" placeholder="[Verse 1]&#10;Start writing your bars here…"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <aside id="rhymes">
+            <div class="side-switch" id="side-switch">
+              <button data-pane="rhymes" class="active"><span class="i" data-icon="rhyme"></span>Rhymes</button>
+              <button data-pane="notes"><span class="i" data-icon="note"></span>Notes</button>
+              <button data-pane="takes"><span class="i" data-icon="mic"></span>Takes</button>
+              <button data-pane="history"><span class="i" data-icon="history"></span>History</button>
+            </div>
+            <div class="pane active" data-pane="rhymes">
+            <div class="rh-head">
+              <div class="rh-label">Rhymes for</div>
+              <div class="rh-word" id="rh-word">·</div>
+              <div class="rh-sub" id="rh-sub">Type a bar. The last word gets rhymed.</div>
+              <div class="search sm">
+                <span class="i" data-icon="search"></span>
+                <input id="rh-search" placeholder="Look up any word (Ctrl+K)" spellcheck="false" />
+                <button class="icon-btn xs" id="rh-pin" title="Pin this word"><span class="i" data-icon="pin"></span></button>
+              </div>
+              <div class="tabs" id="rh-tabs">
+                <button data-tab="perfect" class="active">Perfect</button>
+                <button data-tab="near">Near</button>
+                <button data-tab="multi">Multi</button>
+                <button data-tab="slang">Slang</button>
+                <button data-tab="similar">Similar</button>
+                <span class="tab-ink"></span>
+              </div>
+            </div>
+            <div id="rh-body" class="rh-body"></div>
+            <div id="def-card" class="def-card" hidden></div>
+            </div>
+
+            <div class="pane" data-pane="notes">
+              <div class="pane-pad">
+                <div class="pane-title">Word bank</div>
+                <div class="pane-hint">Collect words and punchlines for this song. Star them from any definition card, or add your own.</div>
+                <form id="bank-form" class="search sm">
+                  <span class="i" data-icon="star"></span>
+                  <input id="bank-input" placeholder="Add a word or line…" spellcheck="false" />
+                  <button class="icon-btn xs" type="submit" title="Add"><span class="i" data-icon="plus"></span></button>
+                </form>
+                <div id="bank" class="bank"></div>
+                <div class="pane-title" style="margin-top:22px">Notes</div>
+                <textarea id="notes" class="notes" placeholder="Concept, mood, story, references, punchline ideas…"></textarea>
+              </div>
+            </div>
+
+            <div class="pane" data-pane="takes">
+              <div class="pane-pad">
+                <div class="rec-box" id="rec-box">
+                  <button class="rec-btn" id="rec-btn" title="Record (Ctrl+R)"><span class="rec-dot"></span></button>
+                  <div class="rec-info">
+                    <div class="rec-time" id="rec-time">0:00</div>
+                    <div class="rec-sub" id="rec-sub">Record a take over your beat</div>
+                  </div>
+                  <canvas id="rec-meter" width="160" height="36"></canvas>
+                </div>
+                <label class="check"><span class="toggle"><input type="checkbox" id="rec-with-beat" checked /><span></span></span>Play the beat while recording</label>
+                <div class="pane-hint">Wear headphones so the beat doesn't bleed into your vocal.</div>
+                <div id="takes-list" class="takes-list"></div>
+              </div>
+            </div>
+
+            <div class="pane" data-pane="history">
+              <div class="pane-pad">
+                <div class="hist-head">
+                  <div>
+                    <div class="pane-title">Versions</div>
+                    <div class="pane-hint">Saved automatically every few minutes while you write.</div>
+                  </div>
+                  <button class="btn sm" id="snap-btn"><span class="i" data-icon="plus"></span>Save version</button>
+                </div>
+                <div id="history-list"></div>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <!-- BEATS -->
+        <section class="view" data-view="beats">
+          <div class="page">
+            <div class="page-head">
+              <div>
+                <h1>Beats</h1>
+                <p class="muted">Import audio files or save links. Drop audio anywhere on the window to import.</p>
+              </div>
+              <button class="btn primary" id="import-beats"><span class="i" data-icon="upload"></span>Import audio</button>
+            </div>
+            <form id="link-form" class="link-form">
+              <span class="i" data-icon="link"></span>
+              <input id="link-url" placeholder="Paste a YouTube, SoundCloud or any beat link…" spellcheck="false" />
+              <input id="link-name" placeholder="Name (optional)" spellcheck="false" />
+              <button class="btn" type="submit">Save link</button>
+            </form>
+            <div id="beat-list" class="beat-list"></div>
+          </div>
+        </section>
+
+        <!-- DICTIONARY -->
+        <section class="view" data-view="dictionary">
+          <div class="page">
+            <div class="page-head">
+              <div>
+                <h1>Word library</h1>
+                <p class="muted" id="dict-count"></p>
+              </div>
+              <button class="btn primary" id="add-word"><span class="i" data-icon="plus"></span>Add your own word</button>
+            </div>
+            <div class="search lg">
+              <span class="i" data-icon="search"></span>
+              <input id="dict-search" placeholder="Search slang, meanings or any word…" spellcheck="false" />
+            </div>
+            <div class="chips" id="dict-cats"></div>
+            <div id="dict-lookup"></div>
+            <div id="dict-grid" class="dict-grid"></div>
+          </div>
+        </section>
+
+        <!-- ARCHIVE -->
+        <section class="view" data-view="archive">
+          <div class="page">
+            <div class="page-head">
+              <div>
+                <h1>Archive</h1>
+                <p class="muted">Archived projects, folders and lyrics. Restore them any time.</p>
+              </div>
+            </div>
+            <div id="archive-list"></div>
+          </div>
+        </section>
+
+        <!-- SETTINGS -->
+        <section class="view" data-view="settings">
+          <div class="page narrow" id="settings-page"></div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Player -->
+    <footer id="player" class="hidden">
+      <div class="pl-left">
+        <div class="pl-disc" id="pl-disc"></div>
+        <div class="pl-info">
+          <div class="pl-name" id="pl-name">·</div>
+          <div class="pl-kind" id="pl-kind"></div>
+        </div>
+      </div>
+      <div class="pl-center">
+        <div class="pl-controls">
+          <button class="icon-btn" id="pl-back" title="Back 5s"><span class="i" data-icon="rewind"></span></button>
+          <button class="play-btn" id="pl-play" title="Play / pause (Ctrl+Space)"><span class="i" data-icon="play"></span></button>
+          <button class="icon-btn" id="pl-loop" title="Loop"><span class="i" data-icon="repeat"></span></button>
+          <button class="icon-btn ab-btn" id="pl-ab" title="A-B loop: click to set A, again for B, again to clear (or Shift+drag the waveform)">A-B</button>
+        </div>
+        <div class="pl-seek">
+          <span id="pl-cur">0:00</span>
+          <canvas id="pl-wave" title="Click to seek · Shift+drag to set an A-B loop"></canvas>
+          <span id="pl-dur">0:00</span>
+        </div>
+      </div>
+      <div class="pl-right">
+        <button class="btn ghost sm" id="pl-tap" title="Tap the tempo">TAP <span id="pl-bpm"></span></button>
+        <span class="i vol-i" data-icon="volume"></span>
+        <input type="range" id="pl-vol" min="0" max="100" value="80" class="vol" />
+        <button class="icon-btn" id="pl-video" title="Show / hide video" hidden><span class="i" data-icon="video"></span></button>
+        <button class="icon-btn" id="pl-ext" title="Open in browser" hidden><span class="i" data-icon="external"></span></button>
+        <button class="icon-btn" id="pl-close" title="Close player"><span class="i" data-icon="x"></span></button>
+      </div>
+    </footer>
+    <div id="embed-wrap" class="embed-wrap hidden"></div>
+    <audio id="audio" preload="auto"></audio>
+  </div>
+
+  <div id="perform" class="perform" hidden>
+    <div class="pf-top">
+      <div class="pf-title" id="pf-title"></div>
+      <div class="pf-ctl">
+        <label>BPM <input id="pf-bpm" type="number" min="40" max="240" class="field num" /></label>
+        <label title="Bars before your first line starts">Intro bars <input id="pf-intro" type="number" min="0" max="64" value="0" class="field num" /></label>
+        <label class="check" title="Metronome click while performing"><span class="toggle"><input type="checkbox" id="pf-click" /><span></span></span>Click</label>
+        <button class="btn sm" id="pf-restart"><span class="i" data-icon="rewind"></span>Restart</button>
+        <button class="play-btn" id="pf-play"><span class="i" data-icon="play"></span></button>
+        <button class="icon-btn" id="pf-close" title="Exit (Esc)"><span class="i" data-icon="x"></span></button>
+      </div>
+    </div>
+    <div class="pf-beats" id="pf-beats"><i></i><i></i><i></i><i></i></div>
+    <div class="pf-stage" id="pf-stage"><div class="pf-lines" id="pf-lines"></div></div>
+    <div class="pf-progress"><div id="pf-prog"></div></div>
+    <div class="pf-hint">Space play / pause · ↑ ↓ jump bars · Esc exit</div>
+  </div>
+
+  <div id="ctx" class="ctx"></div>
+  <div id="modal" class="modal-root"></div>
+  <div id="toasts" class="toasts"></div>
+  <div id="drop-hint" class="drop-hint"><div><span class="i" data-icon="upload"></span>Drop audio to import beats</div></div>
+
+  <script src="logo.js"></script>
+  <script src="slang.js"></script>
+  <script src="rhyme.js"></script>
+  <script src="icons.js"></script>
+  <script src="audio.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

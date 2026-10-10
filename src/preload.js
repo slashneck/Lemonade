@@ -1,0 +1,34 @@
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
+
+const invoke = (ch, ...a) => ipcRenderer.invoke(ch, ...a);
+
+contextBridge.exposeInMainWorld('api', {
+  loadLibrary: () => invoke('lib:load'),
+  saveLibrary: (json) => invoke('lib:save', json),
+  saveLibrarySync: (json) => ipcRenderer.sendSync('lib:saveSync', json),
+  loadLexicon: () => invoke('lexicon:load'),
+  importBeats: () => invoke('beat:import'),
+  importBeatPaths: (paths) => invoke('beat:importPaths', paths),
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  beatUrl: (file) => invoke('beat:url', file),
+  deleteBeat: (file) => invoke('beat:delete', file),
+  saveTake: (data) => invoke('take:save', data),
+  deleteTake: (file) => invoke('take:delete', file),
+  mediaUrl: (kind, file) => invoke('media:url', kind, file),
+  readMedia: (kind, file) => invoke('media:read', kind, file),
+  saveBuffer: (opts) => invoke('file:saveBuffer', opts),
+  exportPdf: (name, html) => invoke('export:pdf', { name, html }),
+  openExternal: (url) => invoke('open:external', url),
+  openDataFolder: () => invoke('data:open'),
+  appInfo: () => invoke('app:info'),
+  setTitlebar: (opts) => invoke('titlebar:set', opts),
+  createShortcut: (where) => invoke('shortcut:create', where),
+  exportText: (name, text) => invoke('export:text', { name, text }),
+  exportBackup: (json) => invoke('backup:export', json),
+  importBackup: () => invoke('backup:import'),
+  updateStatus: () => invoke('update:status'),
+  updateConfig: (opts) => invoke('update:config', opts),
+  checkForUpdate: () => invoke('update:check'),
+  installUpdate: () => invoke('update:install'),
+  onUpdate: (cb) => ipcRenderer.on('update:changed', (_e, status) => cb(status)),
+});

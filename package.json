@@ -1,0 +1,53 @@
+{
+  "name": "lemonade",
+  "productName": "Lemonade",
+  "version": "1.2.0",
+  "description": "Lyrics, freshly squeezed. Write, rhyme and record over your beat.",
+  "author": "slashneck",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "lexicon": "node tools/build-lexicon.mjs",
+    "art": "node tools/make-art.mjs",
+    "release": "powershell -NoProfile -ExecutionPolicy Bypass -File build-release.ps1"
+  },
+  "build": {
+    "appId": "app.lemonade.lyrics",
+    "productName": "Lemonade",
+    "copyright": "Copyright (c) 2026 slashneck",
+    "directories": {
+      "output": "build/electron"
+    },
+    "files": [
+      "src/**",
+      "data/**",
+      "assets/icon.ico",
+      "assets/icon.png",
+      "package.json"
+    ],
+    "electronLanguages": [
+      "en-US"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "dir"
+      ]
+    }
+  },
+  "devDependencies": {
+    "an-array-of-english-words": "^2.0.0",
+    "cmu-pronouncing-dictionary": "^3.0.0",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.5",
+    "subtlex-word-frequencies": "^2.0.0"
+  },
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/slashneck/Lemonade.git"
+  },
+  "homepage": "https://github.com/slashneck/Lemonade"
+}
