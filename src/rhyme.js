@@ -1,7 +1,12 @@
 // Phonetic rhyme engine built on CMU ARPAbet pronunciations.
 (() => {
   const isVowel = (ph) => /\d$/.test(ph);
-  const strip = (ph) => ph.replace(/\d$/, '');
+  // The sound used for matching: no stress mark, and "caught" and "cot" (AO, AA) count as one vowel, the way most
+  // American rap says them, so gone rhymes with on.
+  const strip = (ph) => { const s = ph.replace(/\d$/, ''); return s === 'AO' ? 'AA' : s; };
+
+  // Vowel families for slant rhymes: close enough to rhyme in a verse (money and body, fit and feet).
+  const VFAM = { AA: 'o', AH: 'o', IY: 'i', IH: 'i', EH: 'e', AE: 'e', UW: 'u', UH: 'u', EY: 'ey', AY: 'ay', OW: 'ow', AW: 'aw', OY: 'oy', ER: 'er' };
 
   // Final-consonant families: words ending in the same family make good slant rhymes.
   const FAMILY = {
@@ -43,7 +48,7 @@
 
   class RhymeEngine {
     constructor() {
-      this.words = new Map(); // word -> { p: string[], f: number }
+      this.words = new Map(); // word -> { p: main pronunciation, alts: every pronunciation, f: frequency }
       this.slang = new Map(); // word -> { def, cat }
       this.ready = false;
       this.guessCache = new Map();
@@ -52,11 +57,15 @@
     load(text, slangRaw) {
       for (const line of text.split('\n')) {
         const [w, p, f] = line.split('\t');
-        if (w) this.words.set(w, { p: p.split(' '), f: +f || 0 });
+        if (!w) continue;
+        // alternates without any stress are the quick forms of small words ("can" as k'n): no use for rhymes
+        const alts = p.split('|').map((x) => x.split(' ')).filter((a, i) => i === 0 || a.some((x) => /[12]$/.test(x)));
+        this.words.set(w, { p: alts[0], alts, f: +f || 0 });
       }
       for (const [w, p] of Object.entries(PRON)) {
         const prev = this.words.get(w);
-        this.words.set(w, { p: p.split(' '), f: prev ? prev.f : 0 });
+        const ph = p.split(' ');
+        this.words.set(w, { p: ph, alts: [ph], f: prev ? prev.f : 0 });
       }
       for (const line of slangRaw.split('\n')) {
         const [w, def, cat] = line.split('|');
@@ -76,15 +85,18 @@
       this.byVowel = new Map();
       this.byTail2 = new Map();
       this.byTail3 = new Map();
+      this.byFamily = new Map();
       const all = new Set([...this.words.keys(), ...[...this.slang.keys()].filter((k) => !k.includes(' '))]);
       for (const w of all) this.indexWord(w);
     }
 
     indexKeys(w) {
-      const ph = this.phones(w);
-      if (!ph) return [];
-      return [[this.byPerfect, this.perfectKey(ph)], [this.byVowel, this.vowelKey(ph)],
-        [this.byTail2, this.tailVowels(ph, 2)], [this.byTail3, this.tailVowels(ph, 3)]];
+      const keys = [];
+      for (const ph of this.variants(w)) {
+        keys.push([this.byPerfect, this.perfectKey(ph)], [this.byVowel, this.vowelKey(ph)], [this.byFamily, this.familyKey(ph)],
+          [this.byTail2, this.tailVowels(ph, 2)], [this.byTail3, this.tailVowels(ph, 3)]);
+      }
+      return keys;
     }
     indexWord(w) {
       for (const [m, k] of this.indexKeys(w)) {
@@ -111,7 +123,7 @@
       this.slang.set(key, { word: word.trim(), def, cat: cat || 'yours', custom: true, prev: prev && !prev.custom ? prev : prev?.prev });
       if (single && rhymesWith) {
         const p = this.phones(rhymesWith);
-        if (p) { this.words.set(key, { p: [...p], f: this.freq(key), custom: true }); this.guessCache.delete(key); }
+        if (p) { this.words.set(key, { p: [...p], alts: [[...p]], f: this.freq(key), custom: true }); this.guessCache.delete(key); }
       }
       if (single) this.indexWord(key);
     }
@@ -141,6 +153,15 @@
       const hit = this.words.get(w);
       if (hit) return hit.p;
       return this.guess(w);
+    }
+
+    // Every pronunciation of a word: "either" can rhyme with "neither" both ways.
+    variants(word) {
+      const w = RhymeEngine.clean(word);
+      const hit = w && this.words.get(w);
+      if (hit) return hit.alts;
+      const g = w && this.guess(w);
+      return g ? [g] : [];
     }
 
     has(word) { return this.words.has(RhymeEngine.clean(word)); }
@@ -220,6 +241,9 @@
       const v = ph.filter(isVowel).map(strip);
       return v.length >= n ? v.slice(-n).join(' ') : '';
     }
+    familyKey(ph) {
+      return ph.slice(this.stressIndex(ph)).filter(isVowel).map((v) => VFAM[strip(v)] || strip(v)).join(' ') + '|' + this.finalFamily(ph);
+    }
     finalFamily(ph) {
       const last = ph[ph.length - 1];
       return isVowel(last) ? 'open' : FAMILY[last] || last;
@@ -238,23 +262,32 @@
         .sort((a, b) => (this.slang.has(b) - this.slang.has(a)) || this.freq(b) - this.freq(a));
     }
 
-    // Returns { perfect: [[word, syllables]], near, multi, slang }
+    // Returns { perfect, near, slant, multi, slang }, each a list of [word, syllables].
     find(word, lineText = '') {
       const w = RhymeEngine.clean(word);
-      const ph = this.phones(w);
-      const out = { word: w, perfect: [], near: [], multi: [], slang: [], phones: ph };
+      const vs = this.variants(w);
+      const ph = vs[0] || null;
+      const out = { word: w, perfect: [], near: [], slant: [], multi: [], slang: [], phones: ph };
       if (!ph) return out;
-      const pk = this.perfectKey(ph);
-      const vk = this.vowelKey(ph);
-      const fam = this.finalFamily(ph);
+      const union = (map, keyOf) => {
+        const all = new Set();
+        for (const v of vs) for (const x of map.get(keyOf(v)) || []) all.add(x);
+        all.delete(w);
+        return all;
+      };
+      const pks = new Set(vs.map((v) => this.perfectKey(v)));
+      const vks = new Set(vs.map((v) => this.vowelKey(v)));
+      const fams = new Set(vs.map((v) => this.finalFamily(v)));
 
-      const perfect = this.rank(this.byPerfect.get(pk) || [], w);
-      const perfectSet = new Set(perfect);
-      const nearRaw = (this.byVowel.get(vk) || []).filter((x) => !perfectSet.has(x) && x !== w);
-      const near = this.rank(nearRaw, w).sort((a, b) => {
-        const fa = this.finalFamily(this.phones(a)) === fam, fb = this.finalFamily(this.phones(b)) === fam;
-        return fb - fa;
-      });
+      const perfectSet = union(this.byPerfect, (v) => this.perfectKey(v));
+      const perfect = this.rank([...perfectSet], w);
+      const nearSet = union(this.byVowel, (v) => this.vowelKey(v));
+      for (const x of perfectSet) nearSet.delete(x);
+      const sameEnd = (x) => this.variants(x).some((v) => fams.has(this.finalFamily(v)));
+      const near = this.rank([...nearSet], w).sort((a, b) => sameEnd(b) - sameEnd(a));
+      const slantSet = union(this.byFamily, (v) => this.familyKey(v));
+      for (const x of [...perfectSet, ...nearSet]) slantSet.delete(x);
+      const slant = this.rank([...slantSet], w);
 
       const multi = [];
       const seen = new Set([w, ...perfect.slice(0, 60)]);
@@ -268,19 +301,26 @@
         }
       }
 
-      const slang = [...this.slang.keys()].filter((s) => {
-        if (s === w) return false;
-        const sp = this.phones(s.split(' ').pop());
-        if (!sp) return false;
-        return this.perfectKey(sp) === pk || this.vowelKey(sp) === vk;
-      });
+      const slang = [...this.slang.keys()].filter((k) => k !== w && this.variants(k.split(' ').pop())
+        .some((sp) => pks.has(this.perfectKey(sp)) || vks.has(this.vowelKey(sp))));
 
       const tag = (x) => [x, this.syllables(x)];
-      out.perfect = perfect.slice(0, 160).map(tag);
-      out.near = near.slice(0, 120).map(tag);
+      out.perfect = perfect.slice(0, 200).map(tag);
+      out.near = near.slice(0, 150).map(tag);
+      out.slant = slant.slice(0, 80).map(tag);
       out.multi = multi.slice(0, 80).map(tag);
       out.slang = slang.slice(0, 60).map(tag);
       return out;
+    }
+
+    // How well two words rhyme: 2 perfect, 1 same vowels, 0 not at all.
+    rhymeLevel(a, b) {
+      let best = 0;
+      for (const x of this.variants(a)) for (const y of this.variants(b)) {
+        if (this.perfectKey(x) === this.perfectKey(y)) return 2;
+        if (this.vowelKey(x) === this.vowelKey(y)) best = 1;
+      }
+      return best;
     }
 
     // Key used to group words that rhyme with each other (assonance-level)

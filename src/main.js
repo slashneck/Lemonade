@@ -76,7 +76,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      spellcheck: true,
+      spellcheck: false, // Lemonade checks spelling itself, offline (Chromium's checker would download word lists)
     },
   });
   win.removeMenu();
@@ -149,6 +149,7 @@ ipcMain.on('lib:saveSync', (e, json) => {
   try { writeAtomic(LIB_FILE, json); e.returnValue = true; } catch { e.returnValue = false; }
 });
 ipcMain.handle('lexicon:load', () => fs.readFileSync(path.join(ROOT, 'data', 'lexicon.txt'), 'utf8'));
+ipcMain.handle('spell:load', () => fs.readFileSync(path.join(ROOT, 'data', 'spell.txt'), 'utf8'));
 
 // ---------- beats ----------
 function copyBeat(src) {
@@ -226,6 +227,11 @@ ipcMain.handle('app:info', () => ({
   justUpdated,
 }));
 
+// Cut, copy and paste for the right-click menu
+ipcMain.handle('edit:do', (e, cmd) => {
+  if (['cut', 'copy', 'paste', 'selectAll', 'undo', 'redo'].includes(cmd)) e.sender[cmd]();
+});
+
 // ---------- updates ----------
 ipcMain.handle('update:status', () => updates?.status() || null);
 ipcMain.handle('update:config', (_e, { enabled }) => {
@@ -257,6 +263,36 @@ ipcMain.handle('shortcut:create', (_e, where) => {
     description: 'Lemonade',
   });
   return ok ? { ok: true, path: lnk } : { ok: false, error: 'Windows refused to create the shortcut.' };
+});
+
+// Text files dropped in as lyrics: UTF-8, or the old Windows code page for files from older editors
+function readText(file) {
+  const buf = fs.readFileSync(file);
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return new TextDecoder('windows-1252').decode(buf); }
+}
+ipcMain.handle('lyrics:import', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Import lyrics',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Text', extensions: ['txt', 'text', 'md', 'lrc'] }],
+  });
+  return r.canceled ? [] : r.filePaths.map((f) => ({ name: path.basename(f), text: readText(f) }));
+});
+// A project saved as one text file per lyric, in a new folder inside the one you pick
+ipcMain.handle('export:folder', async (_e, { name, files }) => {
+  const r = await dialog.showOpenDialog(win, { title: 'Choose where to save the lyrics', properties: ['openDirectory', 'createDirectory'] });
+  if (r.canceled) return null;
+  const base = String(name || 'Lyrics').replace(/[\\/:*?"<>|]/g, '_').trim() || 'Lyrics';
+  let dir = path.join(r.filePaths[0], base);
+  for (let n = 2; fs.existsSync(dir); n++) dir = path.join(r.filePaths[0], `${base} (${n})`);
+  for (const f of files) {
+    const rel = path.normalize(String(f.path));
+    if (path.isAbsolute(rel) || rel.split(path.sep).includes('..')) continue;
+    const to = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.writeFileSync(to, String(f.text).replace(/\r?\n/g, '\r\n'), 'utf8');
+  }
+  return dir;
 });
 
 ipcMain.handle('export:text', async (_e, { name, text }) => {

@@ -73,6 +73,35 @@
       schedule();
       this.timer = setInterval(schedule, 25);
     }
+    // Follows a playing track: beats fall on offset + n * 60/bpm of the track's own time, so the clicks start, stop,
+    // jump and loop together with it. timeFn returns the track position, or null while it is paused.
+    follow(timeFn, offset = 0) {
+      const c = ctx();
+      this.stop();
+      this.running = true;
+      let last = null, lastT = null;
+      const schedule = () => {
+        const t = timeFn();
+        if (t == null) { last = lastT = null; return; }
+        if (lastT != null && (t < lastT - 0.05 || t > lastT + 0.5)) last = null; // seeked or looped
+        lastT = t;
+        const spb = 60 / this.bpm, now = c.currentTime;
+        let k = last == null ? Math.ceil((t - offset) / spb - 1e-6) : last + 1;
+        for (;;) {
+          const when = now + (offset + k * spb - t);
+          if (when > now + 0.12) break;
+          if (when >= now - 0.005) {
+            const beat = ((k % this.beats) + this.beats) % this.beats;
+            tick(Math.max(when, now), beat === 0, this.volume);
+            const n = k;
+            setTimeout(() => this.running && this.onTick && this.onTick(beat, n), Math.max(0, (when - now) * 1000));
+          }
+          last = k++;
+        }
+      };
+      schedule();
+      this.timer = setInterval(schedule, 25);
+    }
     stop() { this.running = false; clearInterval(this.timer); this.timer = null; }
     setBpm(bpm) { this.bpm = Math.max(30, Math.min(300, bpm)); }
   }
@@ -131,6 +160,75 @@
     return best ? Math.round(best) : null;
   }
 
+  // Onset strength over time: how much louder each short slice is than the one before.
+  function envelope(buf, hop, maxSec) {
+    const sr = buf.sampleRate, len = Math.min(buf.length, sr * maxSec);
+    const ch = [...Array(buf.numberOfChannels)].map((_, i) => buf.getChannelData(i));
+    const frames = Math.floor(len / hop);
+    const env = new Float32Array(frames);
+    let prev = 0, mean = 0;
+    for (let f = 0; f < frames; f++) {
+      let e = 0;
+      for (let j = f * hop, end = j + hop; j < end; j += 2) { let x = 0; for (const c of ch) x += c[j]; e += x * x; }
+      e = Math.log1p(e * 10);
+      env[f] = Math.max(0, e - prev);
+      prev = e;
+      mean += env[f];
+    }
+    mean /= frames || 1;
+    for (let i = 0; i < frames; i++) env[i] = Math.max(0, env[i] - mean);
+    return { env, fps: sr / hop };
+  }
+  // How sharply the onsets line up on a grid of `period` frames, and the grid's phase (0 to 1).
+  function comb(env, period) {
+    const B = 48, bins = new Float32Array(B);
+    for (let i = 0; i < env.length; i++) if (env[i]) bins[Math.floor(((i / period) % 1) * B)] += env[i];
+    let best = -1, bi = 0;
+    for (let b = 0; b < B; b++) {
+      const v = bins[(b + B - 1) % B] * 0.5 + bins[b] + bins[(b + 1) % B] * 0.5;
+      if (v > best) { best = v; bi = b; }
+    }
+    const y0 = bins[(bi + B - 1) % B], y1 = bins[bi], y2 = bins[(bi + 1) % B];
+    const den = y0 - 2 * y1 + y2;
+    const d = den ? (0.5 * (y0 - y2)) / den : 0;
+    return { score: best, phase: (((bi + 0.5 + d) / B) % 1 + 1) % 1 };
+  }
+  // The beat grid of a track: tempo to a hundredth of a BPM, and the time of a downbeat (beat 1 of a bar).
+  // With `bpm` given, only the grid's position is searched.
+  function analyzeBeat(buf, bpm) {
+    const fixed = !!bpm;
+    bpm = bpm || detectBpm(buf);
+    if (!bpm) return null;
+    const { env, fps } = envelope(buf, 256, 150);
+    if (env.length < 400) return { bpm, offset: 0 };
+    if (!fixed) {
+      let best = bpm, bestScore = -1;
+      for (let c = bpm - 0.8; c <= bpm + 0.8; c += 0.02) {
+        const sc = comb(env, (60 * fps) / c).score;
+        if (sc > bestScore) { bestScore = sc; best = c; }
+      }
+      // beats are almost always made at a whole (or half) BPM: take it when it fits nearly as well
+      const score = (c) => comb(env, (60 * fps) / c).score;
+      const whole = Math.round(best), half = Math.round(best * 2) / 2;
+      if (Math.abs(whole - best) < 0.15 && score(whole) >= bestScore * 0.97) best = whole;
+      else if (Math.abs(half - best) < 0.15 && score(half) >= bestScore * 0.97) best = half;
+      bpm = Math.round(best * 100) / 100;
+    }
+    const spb = 60 / bpm;
+    const beat0 = comb(env, spb * fps).phase * spb + 0.5 / fps;
+    // the bar starts on the beat with the strongest hits
+    let bestK = 0, bestE = -1;
+    for (let k = 0; k < 4; k++) {
+      let e = 0;
+      for (let t = beat0 + k * spb; t * fps < env.length; t += 4 * spb) {
+        const i = Math.round(t * fps);
+        for (let j = i - 2; j <= i + 2; j++) e += env[j] || 0;
+      }
+      if (e > bestE) { bestE = e; bestK = k; }
+    }
+    return { bpm, offset: Math.round((beat0 + bestK * spb) * 1000) / 1000 };
+  }
+
   // ---------- Export ----------
   function encodeWav(buf) {
     const chs = Math.min(2, buf.numberOfChannels), sr = buf.sampleRate, len = buf.length;
@@ -173,5 +271,15 @@
     return out;
   }
 
-  window.LMAudio = { ctx, Metronome, decode, peaks, detectBpm, encodeWav, mix };
+  // Plays an <audio> element through the same audio engine as the metronome, so both share one clock.
+  let mediaSource = null;
+  function routeMedia(el) {
+    if (mediaSource) return mediaSource;
+    const c = ctx();
+    mediaSource = c.createMediaElementSource(el);
+    mediaSource.connect(c.destination);
+    return mediaSource;
+  }
+
+  window.LMAudio = { ctx, Metronome, decode, peaks, detectBpm, analyzeBeat, routeMedia, encodeWav, mix };
 })();

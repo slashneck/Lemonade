@@ -50,6 +50,7 @@
                   <option value="name">A-Z</option>
                   <option value="created">Created</option>
                 </select>
+                <button class="icon-btn" id="left-close" title="Hide library (Ctrl+B)"><span class="i" data-icon="panelLeft"></span></button>
                 <button class="icon-btn" id="new-project" title="New project"><span class="i" data-icon="folderPlus"></span></button>
                 <button class="icon-btn accent" id="new-lyric" title="New lyric (Ctrl+N)"><span class="i" data-icon="plus"></span></button>
               </div>
@@ -58,6 +59,8 @@
           </aside>
 
           <div id="editor-wrap">
+            <button class="edge-tab left" id="edge-left" title="Show library (Ctrl+B)"><span class="i" data-icon="chevron"></span></button>
+            <button class="edge-tab right" id="edge-right" title="Show side panel (Ctrl+J)"><span class="i" data-icon="chevronLeft"></span></button>
             <div id="editor-empty" class="empty">
               <div class="empty-logo" id="empty-logo"></div>
               <h2>Nothing open</h2>
@@ -96,7 +99,7 @@
               <div class="ed-meta" id="ed-meta"></div>
               <div id="editor">
                 <div id="backdrop"><div id="backdrop-inner"></div></div>
-                <textarea id="pad" spellcheck="true" placeholder="[Verse 1]&#10;Start writing your bars here…"></textarea>
+                <textarea id="pad" spellcheck="false" placeholder="[Verse 1]&#10;Start writing your bars here…"></textarea>
               </div>
             </div>
           </div>
@@ -107,6 +110,7 @@
               <button data-pane="notes"><span class="i" data-icon="note"></span>Notes</button>
               <button data-pane="takes"><span class="i" data-icon="mic"></span>Takes</button>
               <button data-pane="history"><span class="i" data-icon="history"></span>History</button>
+              <button class="icon-btn xs side-close" id="right-close" title="Hide panel (Ctrl+J)"><span class="i" data-icon="x"></span></button>
             </div>
             <div class="pane active" data-pane="rhymes">
             <div class="rh-head">
@@ -156,7 +160,15 @@
                   </div>
                   <canvas id="rec-meter" width="160" height="36"></canvas>
                 </div>
+                <div class="mic-box">
+                  <div class="mic-top"><span class="i" data-icon="mic"></span><span class="mic-name">Default microphone</span>
+                    <button class="icon-btn xs" id="mic-settings" title="Microphone settings"><span class="i" data-icon="settings"></span></button></div>
+                  <div class="lvl"><i class="lvl-fill"></i><i class="lvl-peak"></i></div>
+                  <div class="mic-boost"><span>Boost</span><input type="range" id="takes-boost" class="boost-range" min="0" max="24" step="1" value="0" /><span class="size-val boost-val">+0 dB</span></div>
+                  <div class="mic-foot"><span class="mic-hint"></span><button class="btn ghost sm mic-check" id="mic-check">Check level</button></div>
+                </div>
                 <label class="check"><span class="toggle"><input type="checkbox" id="rec-with-beat" checked /><span></span></span>Play the beat while recording</label>
+                <label class="check"><span class="toggle"><input type="checkbox" id="rec-countin" /><span></span></span>Count in one bar first</label>
                 <div class="pane-hint">Wear headphones so the beat doesn't bleed into your vocal.</div>
                 <div id="takes-list" class="takes-list"></div>
               </div>
@@ -290,10 +302,11 @@
     <div class="pf-hint">Space play / pause · ↑ ↓ jump bars · Esc exit</div>
   </div>
 
+  <div id="spell-pop" class="spell-pop" hidden></div>
   <div id="ctx" class="ctx"></div>
   <div id="modal" class="modal-root"></div>
   <div id="toasts" class="toasts"></div>
-  <div id="drop-hint" class="drop-hint"><div><span class="i" data-icon="upload"></span>Drop audio to import beats</div></div>
+  <div id="drop-hint" class="drop-hint"><div><span class="i" data-icon="upload"></span>Drop audio for beats, or .txt files for lyrics</div></div>
 
   <script src="logo.js"></script>
   <script src="slang.js"></script>

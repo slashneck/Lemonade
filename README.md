@@ -27,23 +27,30 @@ every song stays sorted in projects and folders on your own PC.
 
 ## Features
 
-**Rhymes while you write.** Perfect, near, multisyllable and slang rhymes for the end of the bar you're on, or for any
-word you select. They come from a phonetic dictionary of about 54,000 words that works offline. Click a rhyme to see what
-it means, double-click to drop it in. Turn on the online dictionary for extra phrases, similar words and definitions.
+**Rhymes while you write.** Perfect, near, slant, multisyllable and slang rhymes for the end of the bar you're on, or for
+any word you select. They come from a phonetic dictionary of about 54,000 words that works offline and hears rhymes the
+way rap does: gone rhymes with on, money with body. Click a rhyme to see what it means, double-click to drop it in. Turn
+on the online dictionary for extra phrases, similar words and definitions.
 
 **A pad that knows bars.** Numbered bars per `[Verse]` and `[Hook]`, syllables per bar, the rhyme scheme letter of every
 line and colored rhyme highlighting, either for line endings or for every rhyme in the song. Focus mode hides everything
 else.
+
+**Spelling, your way.** Misspelled words get a red line, checked offline against about 280,000 words plus all the slang.
+Choose Off to only see the line, Suggest to get fixes when you point at a word, or Auto to have words fixed as you
+finish them. Ctrl+Z puts your word back, and anything you add to your dictionary stays put.
 
 **A word library.** Close to 500 slang and hip-hop terms with a short meaning each, sorted into money, style, street,
 craft and more. Add your own words, with a "rhymes with" hint so the rhymes come out right.
 
 **Your beat, next to the page.** Import audio files or drop them on the window, or save YouTube and SoundCloud links that
 play in a small player inside the app. The waveform player loops a section with A-B, finds the BPM by itself and has a
-tap tempo. Attach a beat to a song and Lemonade tells you how long the song runs at that tempo.
+tap tempo. Attach a beat to a song and Lemonade tells you how long the song runs at that tempo. The metronome locks to
+the beat's grid, so it starts, stops and loops together with it.
 
-**Record takes.** Record yourself over the beat and play the takes back in sync with it. Export a take as WAV, the vocal
-alone or mixed with the beat.
+**Record takes.** Record yourself over the beat and play the takes back in sync with it. Pick your mic, boost a quiet
+one, watch the level meter and count in a bar before you start. Export a take as WAV, the vocal alone or mixed with the
+beat.
 
 **Perform mode.** A full screen teleprompter that moves from bar to bar in time with the beat or the metronome, with a
 count-in. The metronome is a soft classic click with an accented first beat.
@@ -52,7 +59,8 @@ count-in. The metronome is a soft classic click with an accented first beat.
 what changed and restore any of them. Each song also has a notes pad and a word bank for punchlines you want to keep.
 
 **Projects, folders, archive.** Sort songs with drag and drop, search across every lyric, archive what you're done with
-and export to text or PDF. Dark or light, with the accent color of your choice.
+and export to text or PDF. Drop text files on the window to turn them into lyrics, and save a whole project back as text
+files with one click. Dark or light, with the accent color of your choice.
 
 ## Install
 
@@ -78,6 +86,7 @@ You need Windows 10 (version 1903 or newer) or Windows 11, 64 bit.
 | Search lyrics | <kbd>Ctrl</kbd> + <kbd>F</kbd> |
 | Export | <kbd>Ctrl</kbd> + <kbd>E</kbd> |
 | Hide the library or the side panel | <kbd>Ctrl</kbd> + <kbd>B</kbd>, <kbd>Ctrl</kbd> + <kbd>J</kbd> |
+| Close whatever is on top | <kbd>Esc</kbd> |
 
 ## Where your files are
 

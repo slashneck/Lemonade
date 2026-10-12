@@ -30,5 +30,9 @@ contextBridge.exposeInMainWorld('api', {
   updateConfig: (opts) => invoke('update:config', opts),
   checkForUpdate: () => invoke('update:check'),
   installUpdate: () => invoke('update:install'),
+  loadSpellWords: () => invoke('spell:load'),
+  importText: () => invoke('lyrics:import'),
+  exportFolder: (name, files) => invoke('export:folder', { name, files }),
+  edit: (cmd) => invoke('edit:do', cmd),
   onUpdate: (cb) => ipcRenderer.on('update:changed', (_e, status) => cb(status)),
 });

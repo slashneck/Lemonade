@@ -18,8 +18,9 @@
   const DEFAULT_SETTINGS = {
     theme: 'dark', accent: '#ffd60a', editorFont: 'sans', fontSize: 17, lineHeight: 1.8,
     showBars: true, showSyllables: true, rhymeHighlight: 'end', online: true, animations: true,
-    splash: true, spellcheck: true, reopenLast: true, sort: 'updated', volume: 80, loop: true,
+    splash: true, spelling: 'suggest', reopenLast: true, sort: 'updated', volume: 80, loop: true,
     metroBpm: 90, metroVol: 50, metroBeats: 4, checkUpdates: true,
+    micId: '', micBoost: 0, micLimiter: true, micAgc: false, micNoise: false, micEcho: false, countIn: false,
   };
   const SECTIONS = ['Intro', 'Verse', 'Pre-Hook', 'Hook', 'Chorus', 'Bridge', 'Outro'];
 
@@ -102,22 +103,83 @@ Load a beat and let it ride while the night gets colder
     $$('[data-icon]', root).forEach((el) => { el.innerHTML = icon(el.dataset.icon, +el.dataset.size || 16); });
   }
 
+  // Puts new html into a list. Only items it hasn't shown before play their entrance animation, so clicking around
+  // doesn't make the whole list flash in again. Items carry a stable data-key.
+  function renderKeyed(el, html) {
+    const seen = el._keys || new Set();
+    el.innerHTML = html;
+    const keys = new Set();
+    let n = 0;
+    for (const item of el.querySelectorAll('[data-key]')) {
+      const k = item.dataset.key;
+      keys.add(k);
+      if (seen.has(k)) item.classList.add('still');
+      else item.style.setProperty('--n', Math.min(n++, 30));
+    }
+    el._keys = keys;
+  }
+
+  // Big visual changes (theme, accent, focus mode) crossfade instead of snapping.
+  function crossfade(fn) {
+    if (document.startViewTransition && lib && S().animations) document.startViewTransition(fn);
+    else fn();
+  }
+  // The highlight of a segmented control slides to the chosen option.
+  function inkSegs(root = document) {
+    for (const seg of $$('.seg', root)) {
+      let ink = seg.querySelector('.seg-ink');
+      if (!ink) { ink = document.createElement('i'); ink.className = 'seg-ink'; seg.prepend(ink); }
+      const a = seg.querySelector('button.active');
+      if (!a || !a.offsetWidth) { ink.style.opacity = 0; continue; }
+      ink.style.opacity = 1;
+      ink.style.width = a.offsetWidth + 'px';
+      ink.style.transform = `translateX(${a.offsetLeft}px)`;
+      if (!seg.classList.contains('inked')) requestAnimationFrame(() => seg.classList.add('inked'));
+    }
+  }
+  document.addEventListener('click', (e) => { const b = e.target.closest('.seg button'); if (b) requestAnimationFrame(() => inkSegs(b.parentElement.parentElement)); });
+
+  function dismissToast(t) {
+    if (t.classList.contains('out')) return;
+    clearTimeout(t._t);
+    t.classList.add('out');
+    setTimeout(() => t.remove(), 280);
+  }
   function toast(msg, ic = 'check') {
+    const box = $('#toasts');
+    const live = [...box.children].filter((t) => !t.classList.contains('out'));
+    const same = live.find((t) => t.dataset.msg === msg);
+    if (same) { // the same message again just stays a little longer
+      clearTimeout(same._t);
+      same.classList.remove('bump'); void same.offsetWidth; same.classList.add('bump');
+      same._t = setTimeout(() => dismissToast(same), 2400);
+      return;
+    }
+    if (live.length >= 3) dismissToast(live[0]);
     const t = document.createElement('div');
     t.className = 'toast';
+    t.dataset.msg = msg;
     t.innerHTML = icon(ic, 16) + `<span>${esc(msg)}</span>`;
-    $('#toasts').appendChild(t);
-    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, 2400);
+    t.onclick = () => dismissToast(t);
+    box.appendChild(t);
+    t._t = setTimeout(() => dismissToast(t), 2400);
   }
 
   // ================= Modals & menus =================
   function modal(html, onMount) {
     return new Promise((resolve) => {
       const root = $('#modal');
+      const token = (root._token = {});
+      root.classList.remove('closing');
       root.innerHTML = `<div class="modal">${html}</div>`;
       root.classList.add('open');
       fillIcons(root);
-      const close = (v) => { root.classList.remove('open'); root.innerHTML = ''; document.removeEventListener('keydown', key, true); resolve(v); };
+      const close = (v) => {
+        document.removeEventListener('keydown', key, true);
+        root.classList.add('closing');
+        setTimeout(() => { if (root._token === token) { root.classList.remove('open', 'closing'); root.innerHTML = ''; } }, 150);
+        resolve(v);
+      };
       const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(null); } };
       document.addEventListener('keydown', key, true);
       root.onmousedown = (e) => { if (e.target === root) close(null); };
@@ -155,8 +217,8 @@ Load a beat and let it ride while the night gets colder
 
   const ctx = $('#ctx');
   function showCtx(x, y, items) {
-    ctx.innerHTML = items.map((it, i) => (it === '-' ? '<hr/>' :
-      `<button data-i="${i}" class="${it.danger ? 'danger' : ''}">${icon(it.icon || 'chevron', 15)}<span>${esc(it.label)}</span>${it.kbd ? `<span class="kbd">${it.kbd}</span>` : ''}</button>`)).join('');
+    ctx.innerHTML = items.map((it, i) => (it === '-' ? '<hr/>' : it.head ? `<div class="ctx-head">${esc(it.head)}</div>` :
+      `<button data-i="${i}" class="${it.danger ? 'danger' : ''} ${it.disabled ? 'disabled' : ''} ${it.strong ? 'strong' : ''}">${icon(it.icon || 'chevron', 15)}<span>${esc(it.label)}</span>${it.kbd ? `<span class="kbd">${it.kbd}</span>` : ''}</button>`)).join('');
     ctx.classList.add('open');
     const r = ctx.getBoundingClientRect();
     ctx.style.left = Math.min(x, innerWidth - r.width - 8) + 'px';
@@ -193,7 +255,8 @@ Load a beat and let it ride while the night gets colder
     root.setProperty('--ed-size', s.fontSize + 'px');
     root.setProperty('--ed-lh', s.lineHeight);
     document.body.classList.toggle('no-motion', !s.animations);
-    $('#pad').spellcheck = s.spellcheck;
+    $('#pad').spellcheck = false;
+    if (s.spelling === 'off') hideSpellPop();
     const cs = getComputedStyle(document.documentElement);
     api.setTitlebar({ color: cs.getPropertyValue('--bg').trim(), symbolColor: cs.getPropertyValue('--fg').trim() });
     renderBackdrop();
@@ -207,6 +270,7 @@ Load a beat and let it ride while the night gets colder
 
   // ================= Views =================
   function setView(v) {
+    if (st.view === 'settings' && v !== 'settings' && mic.monitoring && !rec.on) closeMic();
     st.view = v;
     $$('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
     $$('.view').forEach((s) => s.classList.toggle('active', s.dataset.view === v));
@@ -250,18 +314,20 @@ Load a beat and let it ride while the night gets colder
   function renderTree() {
     const tree = $('#tree');
     const q = st.search.trim().toLowerCase();
-    let n = 0;
     const row = (type, item, depth, extra = '') => {
       const isOpen = openSet().has(item.id);
       const name = type === 'lyric' ? item.title || 'Untitled' : item.name;
       const ic = type === 'project' ? 'project' : type === 'folder' ? 'folder' : 'file';
       const count = type === 'lyric' ? '' : lib.lyrics.filter((l) => lyricVisible(l) && (type === 'project' ? l.projectId === item.id : l.folderId === item.id)).length;
-      return `<div class="t-row ${type} ${isOpen ? 'open' : ''} ${item.id === st.openId ? 'active' : ''}" data-type="${type}" data-id="${item.id}"
-        draggable="${type !== 'project'}" style="--d:${depth};--n:${n++}">
+      const active = item.id === st.openId;
+      const opening = item.id === st.treeOpening;
+      return `<div class="t-row ${type} ${isOpen ? 'open' : ''} ${active ? 'active' : ''} ${active && tree._active !== item.id ? 'just' : ''} ${opening ? 'opening' : ''}" data-type="${type}" data-id="${item.id}"
+        data-key="${type}:${item.id}" draggable="${type !== 'project'}" style="--d:${depth}">
         ${type === 'lyric' ? '<span style="width:14px"></span>' : `<span class="chev">${icon('chevron', 14)}</span>`}
         <span class="t-ic">${icon(ic, 15)}</span><span class="t-name">${esc(name)}</span>${extra}
         ${type !== 'lyric' ? `<span class="t-count">${count || ''}</span>` : ''}
         <span class="t-acts">${type !== 'lyric' ? `<button class="icon-btn" data-act="add" title="New lyric here">${icon('plus', 14)}</button>` : ''}
+        <button class="icon-btn" data-act="save" title="${type === 'lyric' ? 'Save as a text file' : 'Save every lyric as a text file'}">${icon('download', 14)}</button>
         <button class="icon-btn" data-act="menu" title="More">${icon('more', 14)}</button></span></div>`;
     };
 
@@ -276,7 +342,8 @@ Load a beat and let it ride while the night gets colder
           html += `<div class="t-snippet">${esc(line.slice(Math.max(0, i - 20), i))}<mark>${esc(line.substr(i, q.length))}</mark>${esc(line.slice(i + q.length, i + 60))}</div>`;
         }
       }
-      tree.innerHTML = html;
+      renderKeyed(tree, html);
+      tree._active = st.openId;
       return;
     }
 
@@ -286,13 +353,13 @@ Load a beat and let it ride while the night gets colder
     for (const p of projects.filter((x) => !x.archived)) {
       html += row('project', p, 0);
       if (!open.has(p.id)) continue;
-      html += '<div class="t-kids">';
+      html += `<div class="t-kids" data-kids="${p.id}">`;
       const folders = sortBy(lib.folders.filter((f) => f.projectId === p.id && !f.archived), 'name');
       for (const f of folders) {
         html += row('folder', f, 1);
         if (!open.has(f.id)) continue;
         const ls = sortBy(lib.lyrics.filter((l) => l.folderId === f.id && !l.archived), S().sort, 'title');
-        html += ls.map((l) => row('lyric', l, 2)).join('') || '<div class="t-empty" style="--d:1">Empty folder</div>';
+        html += `<div class="t-kids" data-kids="${f.id}">` + (ls.map((l) => row('lyric', l, 2)).join('') || '<div class="t-empty" style="--d:1">Empty folder</div>') + '</div>';
       }
       const loose = sortBy(lib.lyrics.filter((l) => l.projectId === p.id && !l.folderId && !l.archived), S().sort, 'title');
       html += loose.map((l) => row('lyric', l, 1)).join('');
@@ -300,11 +367,37 @@ Load a beat and let it ride while the night gets colder
       html += '</div>';
     }
     if (!html) html = '<div class="t-empty" style="padding:20px 8px">No projects. Create one with the folder button above.</div>';
-    tree.innerHTML = html;
+    renderKeyed(tree, html);
+    tree._active = st.openId;
+  }
+
+  // Folders and projects slide open and shut instead of the whole tree being redrawn at once.
+  function toggleTreeNode(t) {
+    const opening = !openSet().has(t.id);
+    const smooth = S().animations;
+    const kids = $(`.t-kids[data-kids="${t.id}"]`);
+    if (!opening) {
+      t.row.classList.remove('open');
+      if (!kids || !smooth) { toggleOpen(t.id, false); renderTree(); return; }
+      kids.style.overflow = 'hidden';
+      kids.animate([{ height: kids.offsetHeight + 'px', opacity: 1 }, { height: '0px', opacity: 0 }], { duration: 190, easing: 'cubic-bezier(.4,0,.2,1)', fill: 'forwards' })
+        .onfinish = () => { toggleOpen(t.id, false); renderTree(); };
+      return;
+    }
+    toggleOpen(t.id, true);
+    st.treeOpening = t.id;
+    renderTree();
+    st.treeOpening = null;
+    const added = $(`.t-kids[data-kids="${t.id}"]`);
+    if (!added || !smooth) return;
+    const h = added.offsetHeight;
+    added.style.overflow = 'hidden';
+    added.animate([{ height: '0px', opacity: 0.2 }, { height: h + 'px', opacity: 1 }], { duration: 230, easing: 'cubic-bezier(.2,.8,.2,1)' })
+      .onfinish = () => { added.style.overflow = ''; };
   }
 
   function treeItem(el) {
-    const r = el.closest('.t-row');
+    const r = el?.closest?.('.t-row');
     if (!r) return null;
     const { type, id } = r.dataset;
     return { row: r, type, id, item: type === 'project' ? project(id) : type === 'folder' ? folder(id) : lyric(id) };
@@ -320,13 +413,17 @@ Load a beat and let it ride while the night gets colder
         e.stopPropagation();
         return t.type === 'project' ? newLyric(t.id, null) : newLyric(t.item.projectId, t.id);
       }
+      if (act === 'save') {
+        e.stopPropagation();
+        return t.type === 'lyric' ? exportLyric(t.item) : exportGroup(t.type, t.item);
+      }
       if (act === 'menu') {
         e.stopPropagation();
         const r = e.target.closest('[data-act]').getBoundingClientRect();
         return itemMenu(t, r.left, r.bottom + 4);
       }
       if (t.type === 'lyric') openLyric(t.id);
-      else { toggleOpen(t.id); renderTree(); }
+      else toggleTreeNode(t);
     });
     tree.addEventListener('dblclick', (e) => {
       const t = treeItem(e.target);
@@ -401,8 +498,14 @@ Load a beat and let it ride while the night gets colder
     if (t.type === 'project') {
       items.push({ label: 'New lyric', icon: 'plus', run: () => newLyric(t.id, null) });
       items.push({ label: 'New folder', icon: 'folderPlus', run: () => newFolder(t.id) });
+      items.push({ label: 'Import text files…', icon: 'upload', run: () => importTextDialog(t.id, null) });
+      items.push({ label: 'Save as text files…', icon: 'download', run: () => exportGroup('project', t.item) });
     }
-    if (t.type === 'folder') items.push({ label: 'New lyric', icon: 'plus', run: () => newLyric(t.item.projectId, t.id) });
+    if (t.type === 'folder') {
+      items.push({ label: 'New lyric', icon: 'plus', run: () => newLyric(t.item.projectId, t.id) });
+      items.push({ label: 'Import text files…', icon: 'upload', run: () => importTextDialog(t.item.projectId, t.id) });
+      items.push({ label: 'Save as text files…', icon: 'download', run: () => exportGroup('folder', t.item) });
+    }
     if (t.type === 'lyric') {
       items.push({ label: 'Open', icon: 'file', run: () => openLyric(t.id) });
       items.push({ label: 'Duplicate', icon: 'copy', run: () => duplicateLyric(t.item) });
@@ -573,12 +676,13 @@ Load a beat and let it ride while the night gets colder
   const caretMoved = () => {
     st.lastSel = [pad.selectionStart, pad.selectionEnd];
     markCurrentLine();
+    if (spell.skip && (pad.selectionStart < spell.skip[0] || pad.selectionStart > spell.skip[1])) scheduleBackdrop();
     clearTimeout(rhymeTimer);
     rhymeTimer = setTimeout(() => updateRhymeTarget(), 140);
   };
   pad.addEventListener('keyup', (e) => { if (/Arrow|Home|End|Page/.test(e.key)) caretMoved(); });
   pad.addEventListener('mouseup', caretMoved);
-  pad.addEventListener('blur', () => { st.lastSel = [pad.selectionStart, pad.selectionEnd]; });
+  pad.addEventListener('blur', () => { st.lastSel = [pad.selectionStart, pad.selectionEnd]; if (spell.skip) scheduleBackdrop(); });
   pad.addEventListener('scroll', () => { $('#backdrop-inner').style.transform = `translateY(${-pad.scrollTop}px)`; });
   pad.addEventListener('keydown', (e) => {
     if (e.key === 'Tab') { e.preventDefault(); document.execCommand('insertText', false, '    '); }
@@ -642,22 +746,37 @@ Load a beat and let it ride while the night gets colder
     if (!lib || !current()) return;
     const { res, wordColor } = (st.analysis = analyze(pad.value));
     const s = S();
-    const curLine = lineIndexAt(pad.selectionStart);
+    const caret = pad.selectionStart;
+    const curLine = lineIndexAt(caret);
+    const typing = document.activeElement === pad;
+    const flash = spell.flash && spell.flash.until > now() ? spell.flash : null;
+    const checking = spellReady();
+    spell.skip = null;
+    let abs = 0;
     const html = res.map((r, i) => {
-      let body = '';
-      if (r.sec || s.rhymeHighlight === 'off') body = esc(r.line);
-      else {
-        let last = 0;
-        for (const m of r.words) {
-          let c = null;
+      const lineStart = abs;
+      abs += r.line.length + 1;
+      let body = '', last = 0;
+      if (!r.sec) for (const m of r.words) {
+        let c = null;
+        if (s.rhymeHighlight !== 'off') {
           if (wordColor) { const k = engine.isStop(m[0]) ? null : engine.endKey(m[0]); if (k && wordColor.has(k)) c = wordColor.get(k); }
           else if (r.end && m.index === r.end.index && r.color !== undefined) c = r.color;
-          if (c === null || c === undefined) continue;
-          body += esc(r.line.slice(last, m.index)) + `<mark class="rc${c}">${esc(m[0])}</mark>`;
-          last = m.index + m[0].length;
         }
-        body += esc(r.line.slice(last));
+        const a = lineStart + m.index, b = a + m[0].length;
+        let bad = false;
+        if (checking) {
+          // the word being typed isn't judged until you leave it
+          if (typing && caret >= a && caret <= b) spell.skip = [a, b];
+          else bad = isMisspelled(m[0], m.index === r.words[0].index);
+        }
+        const fx = flash && flash.start === a;
+        if (c == null && !bad && !fx) continue;
+        const cls = [c != null ? 'rc' + c : '', bad ? 'sp' : '', fx ? 'fixed' : ''].filter(Boolean).join(' ');
+        body += esc(r.line.slice(last, m.index)) + `<mark class="${cls}"${bad ? ` data-li="${i}" data-at="${m.index}"` : ''}>${esc(m[0])}</mark>`;
+        last = b - lineStart;
       }
+      body += esc(r.line.slice(last));
       const num = s.showBars && r.bar ? r.bar : '';
       const right = r.bar ? `<span class="g-right">${s.showSyllables ? `<span class="g-syl">${r.syl}</span>` : ''}${r.letter ? `<span class="g-letter ${r.color !== undefined ? 'rc' + r.color : ''}">${r.letter}</span>` : ''}</span>` : '';
       return `<div class="bl${i === curLine ? ' cur' : ''}${r.sec ? ' sec' : ''}"><span class="g-num">${num}</span>${body || '​'}${right}</div>`;
@@ -766,7 +885,7 @@ Load a beat and let it ride while the night gets colder
     st.rhSub = sub;
     st.rh = engine.find(w, line);
     st.chip = null;
-    $('#def-card').hidden = true;
+    hideDef();
     renderRhymeHead(true);
     renderRhymes();
     if (S().online) fetchWebRhymes(w);
@@ -776,18 +895,27 @@ Load a beat and let it ride while the night gets colder
     let data = webCache.get(w);
     if (!data) {
       try {
-        const q = (rel) => fetch(`https://api.datamuse.com/words?${rel}=${encodeURIComponent(w)}&md=s&max=120`).then((r) => r.json());
+        const q = (rel) => fetch(`https://api.datamuse.com/words?${rel}=${encodeURIComponent(w)}&md=sf&max=120`).then((r) => r.json());
         const [perf, near, similar] = await Promise.all([q('rel_rhy'), q('rel_nry'), q('ml')]);
         data = { perfect: perf, near, similar };
         webCache.set(w, data);
       } catch { return; }
     }
     if (st.rhWord !== w || !st.rh) return;
+    // Datamuse also knows a lot of rare names and odd phrases: keep words people use, and phrases made of them
+    const common = (t) => (spell.words?.get(t) || engine.freq(t) || 0) >= 50;
+    const goodWeb = (list) => (x) => {
+      if (x.word === w || !/^[a-z' -]+$/.test(x.word)) return false;
+      const top = Math.max(1, ...list.map((y) => y.score || 0));
+      if ((x.score || 0) < Math.max(10, top * 0.02)) return false; // Datamuse ranks its odd guesses far down
+      const f = +((x.tags || []).find((t) => t.startsWith('f:')) || 'f:0').slice(2);
+      return x.word.includes(' ') ? x.word.split(/[ -]/).every(common) : (spell.words?.has(x.word) ?? true) && (f >= 0.3 || common(x.word));
+    };
     for (const k of ['perfect', 'near']) {
-      const have = new Set([...st.rh.perfect, ...st.rh.near, ...st.rh.multi].map((x) => x[0]));
-      st.rh['web_' + k] = data[k].filter((x) => !have.has(x.word) && x.word !== w && /^[a-z' -]+$/.test(x.word)).slice(0, 60).map((x) => [x.word, x.numSyllables || 1]);
+      const have = new Set([...st.rh.perfect, ...st.rh.near, ...st.rh.slant, ...st.rh.multi].map((x) => x[0]));
+      st.rh['web_' + k] = data[k].filter((x) => !have.has(x.word) && goodWeb(data[k])(x)).slice(0, 60).map((x) => [x.word, x.numSyllables || 1]);
     }
-    st.rh.similar = (data.similar || []).filter((x) => x.word !== w && /^[a-z' -]+$/.test(x.word)).slice(0, 80).map((x) => [x.word, x.numSyllables || 1]);
+    st.rh.similar = (data.similar || []).filter(goodWeb(data.similar || [])).slice(0, 80).map((x) => [x.word, x.numSyllables || 1]);
     renderRhymeHead(false);
     renderRhymes(true);
   }
@@ -807,7 +935,7 @@ Load a beat and let it ride while the night gets colder
     }
     $('#rh-pin').classList.toggle('on', st.pinned);
     const counts = r ? {
-      perfect: r.perfect.length + (r.web_perfect?.length || 0), near: r.near.length + (r.web_near?.length || 0),
+      perfect: r.perfect.length + (r.web_perfect?.length || 0), near: r.near.length + (r.slant?.length || 0) + (r.web_near?.length || 0),
       multi: r.multi.length, slang: r.slang.length, similar: r.similar?.length || 0,
     } : {};
     $$('#rh-tabs button').forEach((b) => {
@@ -825,10 +953,20 @@ Load a beat and let it ride while the night gets colder
   }
 
   function chips(list, cls = '') {
-    return `<div class="chips">${list.map(([w], i) => {
+    return `<div class="chips">${list.map(([w]) => {
       const sl = engine.slang.has(w);
-      return `<button class="chip ${sl ? 'slang' : ''} ${cls} ${st.chip === w ? 'sel' : ''}" data-w="${esc(w)}" style="--n:${Math.min(i, 40)}" title="${sl ? esc(engine.slang.get(w).def) : ''}">${esc(w)}</button>`;
+      return `<button class="chip ${sl ? 'slang' : ''} ${cls} ${st.chip === w ? 'sel' : ''}" data-key="${esc(st.rhKey + '|' + st.rhymeTab + '|' + w)}" data-w="${esc(w)}" title="${sl ? esc(engine.slang.get(w).def) : ''}">${esc(w)}</button>`;
     }).join('')}</div>`;
+  }
+  const isRare = ([w]) => engine.freq(w) < 3 && !engine.slang.has(w) && !w.includes(' ');
+  function syllableGroups(list) {
+    let html = '';
+    for (const [syl, items] of bySyllables(list)) html += `<div class="rh-group"><h4>${syl}${syl === 5 ? '+' : ''} syllable${syl === 1 ? '' : 's'}</h4>${chips(items)}</div>`;
+    return html;
+  }
+  function rareGroup(list) {
+    if (!list.length) return '';
+    return `<details class="rh-group rare" ${st.showRare ? 'open' : ''}><summary><h4>${icon('chevron', 12)}Rare and unusual words<span class="cnt">${list.length}</span></h4></summary>${chips(list, 'rare')}</details>`;
   }
   function bySyllables(list) {
     const g = new Map();
@@ -855,15 +993,19 @@ Load a beat and let it ride while the night gets colder
         : '';
     } else {
       const list = r[tab] || [];
-      for (const [syl, items] of bySyllables(list)) html += `<div class="rh-group"><h4>${syl}${syl === 5 ? '+' : ''} syllable${syl === 1 ? '' : 's'}</h4>${chips(items)}</div>`;
+      const rare = list.filter(isRare);
+      html += syllableGroups(list.filter((x) => !isRare(x)));
+      if (tab === 'near') {
+        const slant = (r.slant || []).filter((x) => !isRare(x));
+        if (slant.length) html += `<div class="rh-group"><h4>Slant rhymes · similar vowels</h4>${chips(slant, 'slant')}</div>`;
+      }
       const web = r['web_' + tab];
       if (web?.length) html += `<div class="rh-group"><h4>${icon('globe', 12)} From the web · phrases & more</h4>${chips(web, 'web')}</div>`;
       else if (S().online && (tab === 'perfect' || tab === 'near') && !webCache.has(r.word)) html += `<div class="rh-group"><h4>From the web</h4><span class="loading-dots"><i></i><i></i><i></i></span></div>`;
+      html += rareGroup(rare);
     }
     if (!html) html = empty(tab === 'multi' ? 'No multisyllable matches. Try a longer line ending.' : `No ${tab} rhymes for “${esc(r.word)}”. Check the other tabs.`);
-    body.innerHTML = html;
-    body.classList.toggle('settled', settled);
-    if (settled) $$('.chip:not(.web)', body).forEach((c) => (c.style.animation = 'none'));
+    renderKeyed(body, html);
   }
 
   const defCache = new Map();
@@ -884,8 +1026,15 @@ Load a beat and let it ride while the night gets colder
   const POS = { n: 'noun', v: 'verb', adj: 'adj', adv: 'adv', u: '', slang: 'slang' };
   const defList = (defs) => defs.map((d) => `<li><i>${esc(POS[d.pos] ?? d.pos)}</i>${esc(d.text)}</li>`).join('');
 
+  function hideDef() {
+    const card = $('#def-card');
+    if (card.hidden || card.classList.contains('out')) return;
+    card.classList.add('out');
+    setTimeout(() => { card.hidden = true; card.classList.remove('out'); }, 170);
+  }
   async function showDef(word) {
     const card = $('#def-card');
+    card.classList.remove('out');
     const sl = engine.slang.get(word);
     const syl = engine.syllables(word);
     card.hidden = false;
@@ -920,7 +1069,7 @@ Load a beat and let it ride while the night gets colder
     $('#def-card').addEventListener('click', (e) => {
       const a = e.target.closest('[data-dc]')?.dataset.dc;
       const w = $('#def-card').dataset.word;
-      if (a === 'close') $('#def-card').hidden = true;
+      if (a === 'close') hideDef();
       if (a === 'insert') insertAtCursor(w);
       if (a === 'copy') { navigator.clipboard.writeText(w); toast('Copied', 'copy'); }
       if (a === 'bank') {
@@ -933,6 +1082,7 @@ Load a beat and let it ride while the night gets colder
       }
       if (a === 'rhyme') { st.pinned = true; $('#rh-search').value = w; setRhymeWord(w, '', 'Lookup'); }
     });
+    body.addEventListener('toggle', (e) => { if (e.target.classList.contains('rare')) st.showRare = e.target.open; }, true);
     $$('#rh-tabs button').forEach((b) => (b.onclick = () => {
       st.rhymeTab = b.dataset.tab;
       $$('#rh-tabs button').forEach((x) => x.classList.toggle('active', x === b));
@@ -998,10 +1148,10 @@ Load a beat and let it ride while the night gets colder
       return;
     }
     const cur = current();
-    list.innerHTML = lib.beats.map((b, i) => {
+    list._html = lib.beats.map((b) => {
       const uses = lib.lyrics.filter((l) => l.beatId === b.id).length;
       const playing = player.beat?.id === b.id && player.playing;
-      return `<div class="beat ${playing ? 'playing' : ''}" data-id="${b.id}" style="--n:${i}">
+      return `<div class="beat ${playing ? 'playing' : ''}" data-id="${b.id}" data-key="${b.id}">
         <button class="b-play" data-b="play">${icon(playing ? 'pause' : b.kind === 'link' ? 'external' : 'play', 16)}</button>
         <div class="b-info"><div class="b-name" title="Double-click to rename">${esc(b.name)}</div>
           <div class="b-sub">${playing ? '<span class="bars-anim"><i></i><i></i><i></i></span>' : ''}<span>${KIND_LABEL[b.kind]}</span>${uses ? `<span>· used in ${uses} lyric${uses > 1 ? 's' : ''}</span>` : ''}</div></div>
@@ -1013,6 +1163,7 @@ Load a beat and let it ride while the night gets colder
           <button class="icon-btn" data-b="delete" title="Delete">${icon('trash', 15)}</button>
         </div></div>`;
     }).join('');
+    renderKeyed(list, list._html);
   }
 
   function bindBeats() {
@@ -1054,8 +1205,7 @@ Load a beat and let it ride while the night gets colder
     list.addEventListener('change', (e) => {
       if (e.target.dataset.b !== 'bpm') return;
       const b = beat(e.target.closest('.beat').dataset.id);
-      b.bpm = +e.target.value || null;
-      persist(); renderMeta(); updateBpmLabel();
+      setBeatBpm(b, +e.target.value || null);
     });
     $('#import-beats').onclick = () => importBeats();
     $('#link-form').onsubmit = (e) => {
@@ -1076,7 +1226,7 @@ Load a beat and let it ride while the night gets colder
     $('#player').classList.remove('hidden');
     document.body.classList.add('has-player');
     $('#pl-name').textContent = b.name;
-    $('#pl-kind').textContent = KIND_LABEL[b.kind] + (b.bpm ? ` · ${b.bpm} BPM` : '');
+    $('#pl-kind').textContent = KIND_LABEL[b.kind] + (b.bpm ? ` · ${fmtBpm(b.bpm)} BPM` : '');
     const isFile = b.kind === 'file';
     $('.pl-seek').style.visibility = isFile ? '' : 'hidden';
     $('#pl-back').style.visibility = isFile ? '' : 'hidden';
@@ -1093,6 +1243,7 @@ Load a beat and let it ride while the night gets colder
       if (autoplay) audio.play().catch(() => toast('Could not play this file', 'x'));
     } else if (autoplay) startEmbed();
     setPlaying(isFile ? !audio.paused : player.embed);
+    metroSync();
   }
 
   function startEmbed() {
@@ -1102,7 +1253,10 @@ Load a beat and let it ride while the night gets colder
     if (b.kind === 'youtube') src = `https://www.youtube-nocookie.com/embed/${b.vid}?autoplay=1&loop=1&playlist=${b.vid}&rel=0&modestbranding=1`;
     else src = `https://w.soundcloud.com/player/?url=${encodeURIComponent(b.url)}&auto_play=true&visual=false&show_comments=false&color=${encodeURIComponent((S().accent === 'mono' ? '#ffffff' : S().accent).replace('#', ''))}`;
     wrap.className = 'embed-wrap' + (b.kind === 'soundcloud' ? ' sc' : '');
-    wrap.innerHTML = `<iframe src="${src}" allow="autoplay; encrypted-media" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
+    wrap.innerHTML = `<div class="embed-bar">${icon(b.kind === 'youtube' ? 'video' : 'music', 14)}<span class="eb-name">${esc(b.name)}</span>
+      <button class="icon-btn xs" data-e="min" title="Hide (keeps playing)">${icon('minus', 14)}</button>
+      <button class="icon-btn xs" data-e="close" title="Stop">${icon('x', 14)}</button></div>
+      <iframe src="${src}" allow="autoplay; encrypted-media" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
     player.embed = true;
     setPlaying(true);
   }
@@ -1131,13 +1285,15 @@ Load a beat and let it ride while the night gets colder
     setPlaying(false);
     $('#player').classList.add('hidden');
     document.body.classList.remove('has-player');
+    if (st.metroOn) metroToggle(false);
   }
-  function updateBpmLabel() { $('#pl-bpm').textContent = player.beat?.bpm ? player.beat.bpm : ''; }
+  function updateBpmLabel() { $('#pl-bpm').textContent = player.beat?.bpm ? fmtBpm(player.beat.bpm) : ''; }
   function setRangeFill(el) { el.style.setProperty('--p', (el.value / el.max) * 100 + '%'); }
 
   function bindPlayer() {
     $('#pl-disc').innerHTML = logo(40, 'disc');
-    audio.addEventListener('play', () => setPlaying(true));
+    LMAudio.routeMedia(audio);
+    audio.addEventListener('play', () => { LMAudio.ctx(); setPlaying(true); });
     audio.addEventListener('pause', () => setPlaying(false));
     audio.addEventListener('ended', () => setPlaying(false));
     audio.addEventListener('loadedmetadata', () => { $('#pl-dur').textContent = fmtTime(audio.duration); });
@@ -1168,12 +1324,14 @@ Load a beat and let it ride while the night gets colder
         const iv = (player.taps[player.taps.length - 1] - player.taps[0]) / (player.taps.length - 1);
         const bpm = Math.round(60000 / iv);
         $('#pl-bpm').textContent = bpm;
-        if (player.beat && player.taps.length >= 4) {
-          player.beat.bpm = bpm; player.beat.bpmAuto = false; persist(); renderMeta();
-          $('#pl-kind').textContent = KIND_LABEL[player.beat.kind] + ` · ${bpm} BPM`;
-        }
+        if (player.beat && player.taps.length >= 4) setBeatBpm(player.beat, bpm);
       }
     };
+  }
+
+  // Text files saved by Notepad can be UTF-8 or the old Windows code page.
+  function decodeText(buf) {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return new TextDecoder('windows-1252').decode(buf); }
   }
 
   // file drop
@@ -1185,7 +1343,16 @@ Load a beat and let it ride while the night gets colder
     if (!e.dataTransfer.files.length) return;
     e.preventDefault();
     dragDepth = 0; $('#drop-hint').classList.remove('on');
-    const paths = [...e.dataTransfer.files].map((f) => api.pathForFile(f)).filter(Boolean);
+    const all = [...e.dataTransfer.files];
+    const texts = all.filter((f) => /\.(txt|text|md|lrc)$/i.test(f.name));
+    if (texts.length) {
+      const target = treeItem(e.target); // dropped onto a project or folder in the library
+      const pid = target ? (target.type === 'project' ? target.id : target.item.projectId) : null;
+      const fid = target?.type === 'folder' ? target.id : target?.type === 'lyric' ? target.item.folderId : null;
+      importTextFiles(await Promise.all(texts.map(async (f) => ({ name: f.name, text: decodeText(await f.arrayBuffer()) }))), pid, fid);
+    }
+    const paths = all.filter((f) => !texts.includes(f)).map((f) => api.pathForFile(f)).filter(Boolean);
+    if (!paths.length) return;
     const added = await importBeats(paths);
     if (!added.length) toast('No supported audio files', 'x');
     else if (st.view === 'write' && current() && !current().beatId) { current().beatId = added[0].id; loadBeat(added[0], false); renderAttach(); renderMeta(); persist(); }
@@ -1208,9 +1375,10 @@ Load a beat and let it ride while the night gets colder
     const items = [...engine.slang.entries()]
       .filter(([k, s]) => (dictCat === 'all' || s.cat === dictCat) && (!q || k.includes(q) || s.def.toLowerCase().includes(q)))
       .sort((a, b) => (q ? (b[0].startsWith(q) - a[0].startsWith(q)) : 0) || a[0].localeCompare(b[0]));
-    $('#dict-grid').innerHTML = items.map(([k, s], i) => `<div class="d-card" data-w="${esc(k)}" style="--n:${i}">
+    $('#dict-grid')._html = items.map(([k, s]) => `<div class="d-card" data-w="${esc(k)}" data-key="${esc(k)}">
       <div class="w"><span>${esc(s.word)}</span><span class="acts">${s.custom ? `<button class="del" data-del="${esc(k)}" title="Remove your word">${icon('trash', 13)}</button>` : ''}<span class="slang-tag">${esc(s.custom && s.cat === 'yours' ? 'yours' : s.cat)}</span></span></div><div class="d">${esc(s.def)}</div></div>`).join('')
       || (q ? '' : '<div class="muted">Nothing here.</div>');
+    renderKeyed($('#dict-grid'), $('#dict-grid')._html);
   }
   async function lookup(word) {
     word = RhymeEngine.clean(word);
@@ -1219,7 +1387,7 @@ Load a beat and let it ride while the night gets colder
     const ph = engine.phones(word);
     const syl = engine.syllables(word);
     const r = engine.find(word);
-    box.innerHTML = `<div class="lookup-card"><div style="display:flex;align-items:center;gap:10px"><h3>${esc(word)}</h3>${engine.slang.has(word) ? '<span class="slang-tag">slang</span>' : ''}</div>
+    box.innerHTML = `<div class="lookup-card"><button class="icon-btn lc-close" data-lookup-close title="Close (Esc)">${icon('x', 15)}</button><div style="display:flex;align-items:center;gap:10px"><h3>${esc(word)}</h3>${engine.slang.has(word) ? '<span class="slang-tag">slang</span>' : ''}</div>
       <div class="lc-meta">${syl} syllable${syl === 1 ? '' : 's'}${ph ? ' · ' + esc(ph.join(' ').replace(/\d/g, '').toLowerCase()) : ''}${engine.has(word) ? '' : ' · not in dictionary, pronunciation guessed'}</div>
       <ol class="lc-defs"><li style="list-style:none;margin-left:-18px"><span class="loading-dots"><i></i><i></i><i></i></span></li></ol>
       <div class="rh-group"><h4>Top rhymes</h4>${chips([...r.slang.slice(0, 8), ...r.perfect.slice(0, 24)].filter((x, i, a) => a.findIndex((y) => y[0] === x[0]) === i))}</div>
@@ -1228,6 +1396,14 @@ Load a beat and let it ride while the night gets colder
     const defs = await getDefs(word);
     if (box.querySelector('h3')?.textContent !== word) return;
     $('.lc-defs', box).innerHTML = defList(defs) || '<li class="muted" style="list-style:none;margin-left:-18px">No definition found' + (S().online ? '' : ' (online dictionary is off in Settings)') + '.</li>';
+  }
+  function closeLookup() {
+    const box = $('#dict-lookup');
+    const card = $('.lookup-card', box);
+    if (!card) return;
+    card.classList.add('out');
+    setTimeout(() => { box.innerHTML = ''; }, 160);
+    if ($('#dict-search').value) { $('#dict-search').value = ''; renderDictGrid(); }
   }
   function bindDictionary() {
     let t;
@@ -1253,6 +1429,7 @@ Load a beat and let it ride while the night gets colder
     $('#dict-lookup').addEventListener('click', (e) => {
       const chip = e.target.closest('.chip');
       if (chip) { $('#dict-search').value = chip.dataset.w; lookup(chip.dataset.w); renderDictGrid(); }
+      if (e.target.closest('[data-lookup-close]')) return closeLookup();
       const aw = e.target.closest('[data-add-word]');
       if (aw) return addWordModal({ word: aw.dataset.addWord });
       const b = e.target.closest('[data-lookup-rhyme]');
@@ -1276,7 +1453,7 @@ Load a beat and let it ride while the night gets colder
     let html = '';
     for (const [title, type, items, sub] of groups) {
       if (!items.length) continue;
-      html += `<div class="arch-group"><h3>${title}</h3>` + items.map((it, i) => `<div class="arch-row" data-type="${type}" data-id="${it.id}" style="--n:${i}">
+      html += `<div class="arch-group"><h3>${title}</h3>` + items.map((it) => `<div class="arch-row" data-type="${type}" data-id="${it.id}" data-key="${type}:${it.id}">
         ${icon(type === 'project' ? 'project' : type === 'folder' ? 'folder' : 'file', 16)}
         <div class="a-name">${esc(it.title || it.name || 'Untitled')}<span class="a-sub">${esc(sub(it))}${it.archivedAt ? ' · archived ' + rel(it.archivedAt) : ''}</span></div>
         <button class="btn sm" data-a="restore">${icon('restore', 14)}Restore</button>
@@ -1308,7 +1485,7 @@ Load a beat and let it ride while the night gets colder
       `<button data-v="${v}" class="${String(s[key]) === String(v) ? 'active' : ''}">${ic ? icon(ic, 14) : ''}${label}</button>`).join('')}</div>`;
     const tog = (key) => `<label class="toggle"><input type="checkbox" data-tog="${key}" ${s[key] ? 'checked' : ''}/><span></span></label>`;
     const row = (title, desc, ctl) => `<div class="set-row"><div class="sr-text"><div class="sr-title">${title}</div>${desc ? `<div class="sr-desc">${desc}</div>` : ''}</div><div class="sr-ctl">${ctl}</div></div>`;
-    const section = (title, rows, n) => `<div class="set-section" style="--n:${n}"><h3>${title}</h3><div class="set-card">${rows}</div></div>`;
+    const section = (title, rows, n, id = '') => `<div class="set-section" ${id ? `id="${id}"` : ''} style="--n:${n}"><h3>${title}</h3><div class="set-card">${rows}</div></div>`;
     const isCustom = !ACCENTS.some(([c]) => c === s.accent);
 
     $('#settings-page').innerHTML = `
@@ -1328,8 +1505,22 @@ Load a beat and let it ride while the night gets colder
         row('Rhyme highlighting', 'Color rhyming line endings, or every rhyming word.', seg('rhymeHighlight', [['off', 'Off'], ['end', 'Line ends'], ['all', 'All rhymes']])),
         row('Bar numbers', 'Numbered bars, restarting with each [Section].', tog('showBars')),
         row('Syllable count', 'Syllables per bar, shown on the right.', tog('showSyllables')),
-        row('Spellcheck', '', tog('spellcheck')),
+        row('Spelling', 'Off only underlines misspelled words. Suggest also lists fixes when you point at one. Auto fixes a word as soon as you finish it, and Ctrl+Z puts yours back.',
+          seg('spelling', [['off', 'Off'], ['suggest', 'Suggest'], ['auto', 'Auto']])),
+        row('Your dictionary', `${lib.dictionary.length} word${lib.dictionary.length === 1 ? '' : 's'} you added. They are never marked as misspelled.`, `<button class="btn sm" data-act="dict">${icon('book', 14)}Edit</button>`),
       ].join(''), 1)}
+      ${section('Recording', [
+        row('Microphone', 'The mic takes are recorded with.', `<select id="mic-select" class="mic-select"><option value="">Windows default</option></select>`),
+        row('Mic boost', 'Turns a quiet mic up before it is recorded.', `<input type="range" class="boost-range" data-boost min="0" max="24" step="1" value="${s.micBoost || 0}"/><span class="size-val boost-val">+${s.micBoost || 0} dB</span>`),
+        `<div class="set-row set-level"><div class="sr-text"><div class="sr-title">Level</div><div class="sr-desc mic-hint">Check the level while you rap a few bars.</div>
+          <div class="lvl wide"><i class="lvl-fill"></i><i class="lvl-peak"></i></div></div>
+          <div class="sr-ctl"><button class="btn sm mic-check" data-act="miccheck">${icon('mic', 14)}Check level</button></div></div>`,
+        row('Limiter', 'Keeps boosted takes from clipping on loud parts.', tog('micLimiter')),
+        row('Auto gain', 'Lets Windows even out your volume. It can pump on loud and quiet parts.', tog('micAgc')),
+        row('Noise suppression', 'Filters out steady noise like fans. It can make vocals sound thinner.', tog('micNoise')),
+        row('Echo cancellation', 'Only needed without headphones.', tog('micEcho')),
+        row('Count-in', 'One bar of clicks before a take starts.', tog('countIn')),
+      ].join(''), 2, 'set-recording')}
       ${section('Rhymes & dictionary', [
         row('Online dictionary', 'Adds rhymes, phrases and definitions from Datamuse. The words you look up are sent there. Rhymes work offline without it.', tog('online')),
       ].join(''), 2)}
@@ -1359,6 +1550,34 @@ Load a beat and let it ride while the night gets colder
         <span>Insert a rhyme</span><span>double-click a rhyme chip</span></div>`, 5)}
       ${section('About', `<div class="set-row"><div class="sr-text"><div class="sr-desc">Free and open source under the GNU GPL 3.0. Pronunciations from the CMU Pronouncing Dictionary, word frequencies from SUBTLEX-US, online rhymes and definitions from the Datamuse API. Electron ${esc(info.electron)}.</div></div><div class="sr-ctl"><button class="btn sm" data-act="repo">${icon('external', 14)}GitHub</button></div></div>`, 7)}`;
     $$('#settings-page input[type=range]').forEach(setRangeFill);
+    fillMicSelect();
+    requestAnimationFrame(() => inkSegs($('#settings-page')));
+  }
+
+  async function fillMicSelect() {
+    const sel = $('#mic-select');
+    if (!sel) return;
+    const devs = await refreshMicName();
+    sel.innerHTML = '<option value="">Windows default</option>' + devs.filter((d) => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications')
+      .map((d, i) => `<option value="${esc(d.deviceId)}" ${d.deviceId === S().micId ? 'selected' : ''}>${esc(d.label || `Microphone ${i + 1}`)}</option>`).join('');
+  }
+
+  async function editDictionary() {
+    const words = await modal(`<h3>Your dictionary</h3><p>Words here are never marked as misspelled. One per line.</p>
+      <textarea class="field dict-edit" spellcheck="false">${esc(lib.dictionary.join('\n'))}</textarea>
+      <div class="m-acts"><button class="btn ghost" data-x>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (m, close) => {
+      const ta = $('textarea', m);
+      ta.focus();
+      $('[data-x]', m).onclick = () => close(null);
+      $('[data-ok]', m).onclick = () => close(ta.value);
+    });
+    if (words == null) return;
+    lib.dictionary = [...new Set(words.split(/\r?\n/).map((w) => w.trim().toLowerCase()).filter(Boolean))].sort();
+    dictSet = new Set(lib.dictionary);
+    spell.cache.clear();
+    persist();
+    scheduleBackdrop();
+    renderSettings();
   }
 
   function bindSettings() {
@@ -1369,12 +1588,12 @@ Load a beat and let it ride while the night gets colder
         const key = segBtn.parentElement.dataset.seg;
         let v = segBtn.dataset.v;
         $$('button', segBtn.parentElement).forEach((b) => b.classList.toggle('active', b === segBtn));
-        setSetting(key, v);
+        if (key === 'theme') crossfade(() => setSetting(key, v)); else setSetting(key, v);
         return;
       }
       const sw = e.target.closest('[data-accent]');
       if (sw) {
-        setSetting('accent', sw.dataset.accent);
+        crossfade(() => setSetting('accent', sw.dataset.accent));
         $$('.swatch', page).forEach((x) => x.classList.toggle('active', x === sw));
         return;
       }
@@ -1399,6 +1618,8 @@ Load a beat and let it ride while the night gets colder
       }
       if (act === 'data') api.openDataFolder();
       if (act === 'repo') api.openExternal('https://github.com/slashneck/Lemonade');
+      if (act === 'dict') editDictionary();
+      if (act === 'miccheck') toggleMicCheck();
       if (act === 'check') api.checkForUpdate();
       if (act === 'restart') installUpdate();
       if (act === 'release') api.openExternal(st.update?.pageUrl || 'https://github.com/slashneck/Lemonade/releases');
@@ -1406,12 +1627,16 @@ Load a beat and let it ride while the night gets colder
     page.addEventListener('change', (e) => {
       if (e.target.dataset.tog) setSetting(e.target.dataset.tog, e.target.checked);
       if (e.target.dataset.tog === 'checkUpdates') { api.updateConfig({ enabled: e.target.checked }); renderUpdateUi(); }
+      if (['micLimiter', 'micAgc', 'micNoise', 'micEcho'].includes(e.target.dataset.tog) && mic.stream) openMic();
+      if (e.target.dataset.tog === 'countIn') $('#rec-countin').checked = e.target.checked;
+      if (e.target.id === 'mic-select') { S().micId = e.target.value; persist(); if (mic.stream) openMic(); else refreshMicName(); }
       if (e.target.id === 'accent-custom') {
         setSetting('accent', e.target.value);
         $$('.swatch', page).forEach((x) => x.classList.toggle('active', x.classList.contains('custom')));
       }
     });
     page.addEventListener('input', (e) => {
+      if (e.target.dataset.boost !== undefined) return setMicBoost(+e.target.value);
       const k = e.target.dataset.range;
       if (k) {
         const v = +e.target.value;
@@ -1430,6 +1655,7 @@ Load a beat and let it ride while the night gets colder
 
   // ================= Side panes & panels =================
   function setPane(name) {
+    if (st.pane === 'takes' && name !== 'takes' && mic.monitoring && !rec.on) closeMic();
     st.pane = name;
     $$('#side-switch button').forEach((b) => b.classList.toggle('active', b.dataset.pane === name));
     $$('#rhymes .pane').forEach((p) => p.classList.toggle('active', p.dataset.pane === name));
@@ -1444,6 +1670,8 @@ Load a beat and let it ride while the night gets colder
   function setPanels() {
     $('#sidebar').classList.toggle('collapsed', !!lib.ui.leftHidden);
     $('#rhymes').classList.toggle('collapsed', !!lib.ui.rightHidden);
+    document.body.classList.toggle('left-hidden', !!lib.ui.leftHidden);
+    document.body.classList.toggle('right-hidden', !!lib.ui.rightHidden);
   }
   function togglePanel(side) {
     const k = side === 'left' ? 'leftHidden' : 'rightHidden';
@@ -1460,10 +1688,11 @@ Load a beat and let it ride while the night gets colder
     $('#notes').value = l?.notes || '';
     if (!l) { bank.innerHTML = '<div class="bank-empty">Open a lyric to use the word bank.</div>'; return; }
     const items = l.bank || [];
-    bank.innerHTML = items.length
-      ? items.map((w, i) => `<div class="bank-item ${/\s/.test(w.trim()) && w.length > 16 ? 'line' : ''}" data-i="${i}" title="Click for rhymes" style="animation-delay:${Math.min(i, 30) * 15}ms">
+    bank._html = items.length
+      ? items.map((w, i) => `<div class="bank-item ${/\s/.test(w.trim()) && w.length > 16 ? 'line' : ''}" data-i="${i}" data-key="${esc(w)}" title="Click for rhymes">
           <span>${esc(w)}</span><button data-ins="${i}" title="Insert into lyric">${icon('plus', 12)}</button><button data-x="${i}" title="Remove">${icon('x', 12)}</button></div>`).join('')
       : '<div class="bank-empty">Nothing saved yet.</div>';
+    renderKeyed(bank, bank._html);
   }
   const inBank = (w) => !!current()?.bank?.some((x) => x.toLowerCase() === w.toLowerCase());
   function toggleBank(text) {
@@ -1506,29 +1735,167 @@ Load a beat and let it ride while the night gets colder
   const takeAudio = new Audio();
   const tp = { id: null, withBeat: false, raf: 0 };
 
-  function toggleRecord() { rec.on ? stopRecording() : startRecording(); }
+  // ================= Microphone =================
+  // The mic runs through a boost and a limiter before it is recorded, so a quiet mic can be turned up without the
+  // loud parts clipping. The same chain feeds the level meters.
+  const mic = { stream: null, key: '', gain: null, limiter: null, analyser: null, dest: null, monitoring: false, raf: 0, peakHold: 0, recent: [], stopT: 0 };
+  const dbToGain = (db) => Math.pow(10, db / 20);
+  const micKey = () => { const m = S(); return [m.micId, m.micAgc, m.micNoise, m.micEcho, m.micLimiter].join('|'); };
+
+  async function openMic() {
+    if (mic.stream && mic.key === micKey()) return mic;
+    closeMic();
+    const m = S();
+    const audioOpts = { echoCancellation: !!m.micEcho, noiseSuppression: !!m.micNoise, autoGainControl: !!m.micAgc };
+    if (m.micId) audioOpts.deviceId = { exact: m.micId };
+    try {
+      mic.stream = await navigator.mediaDevices.getUserMedia({ audio: audioOpts });
+    } catch (err) {
+      if (m.micId) { m.micId = ''; persist(); return openMic(); } // that mic is gone: use the default one
+      throw err;
+    }
+    mic.key = micKey();
+    const c = LMAudio.ctx();
+    const src = c.createMediaStreamSource(mic.stream);
+    mic.gain = c.createGain();
+    mic.gain.gain.value = dbToGain(m.micBoost || 0);
+    mic.limiter = c.createDynamicsCompressor();
+    mic.limiter.threshold.value = -2; mic.limiter.knee.value = 0; mic.limiter.ratio.value = 20;
+    mic.limiter.attack.value = 0.002; mic.limiter.release.value = 0.12;
+    mic.analyser = c.createAnalyser();
+    mic.analyser.fftSize = 1024;
+    mic.dest = c.createMediaStreamDestination();
+    src.connect(mic.gain);
+    if (m.micLimiter !== false) mic.gain.connect(mic.limiter).connect(mic.analyser); else mic.gain.connect(mic.analyser);
+    mic.analyser.connect(mic.dest);
+    refreshMicName();
+    micMeterLoop();
+    return mic;
+  }
+  function closeMic() {
+    if (!mic.stream) return;
+    mic.stream.getTracks().forEach((t) => t.stop());
+    mic.stream = null;
+    mic.monitoring = false;
+    cancelAnimationFrame(mic.raf);
+    clearTimeout(mic.stopT);
+    $$('.lvl').forEach((el) => { el.style.setProperty('--lvl', '0%'); el.style.setProperty('--peak', '0%'); el.classList.remove('hot'); });
+    $$('.mic-check').forEach((b) => b.classList.remove('on'));
+    setMicHint('');
+  }
+  function setMicBoost(db) {
+    S().micBoost = db;
+    if (mic.gain) mic.gain.gain.setTargetAtTime(dbToGain(db), LMAudio.ctx().currentTime, 0.02);
+    $$('.boost-range').forEach((r) => { if (+r.value !== db) r.value = db; setRangeFill(r); });
+    $$('.boost-val').forEach((v) => (v.textContent = `+${db} dB`));
+    persist();
+  }
+  // Checking the level opens the mic for a minute, or until you check again.
+  async function toggleMicCheck() {
+    if (mic.monitoring) { mic.monitoring = false; if (!rec.on) closeMic(); return; }
+    try { await openMic(); } catch { return toast('No microphone available', 'x'); }
+    mic.monitoring = true;
+    mic.recent = [];
+    $$('.mic-check').forEach((b) => b.classList.add('on'));
+    clearTimeout(mic.stopT);
+    mic.stopT = setTimeout(() => { if (mic.monitoring && !rec.on) closeMic(); }, 60000);
+  }
+  function setMicHint(text, kind = '') {
+    $$('.mic-hint').forEach((el) => { el.textContent = text; el.dataset.kind = kind; });
+  }
+  async function refreshMicName() {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput');
+    const track = mic.stream?.getAudioTracks()[0];
+    const name = track?.label || devs.find((d) => d.deviceId === S().micId)?.label || 'Default microphone';
+    $$('.mic-name').forEach((el) => (el.textContent = name.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)$/i, '')));
+    return devs;
+  }
+  function micMeterLoop() {
+    cancelAnimationFrame(mic.raf);
+    const data = new Float32Array(mic.analyser.fftSize);
+    const loop = () => {
+      if (!mic.stream) return;
+      mic.analyser.getFloatTimeDomainData(data);
+      let peak = 0, sum = 0;
+      for (const v of data) { const a = Math.abs(v); if (a > peak) peak = a; sum += v * v; }
+      const rms = Math.sqrt(sum / data.length);
+      const db = (x) => (x > 0 ? 20 * Math.log10(x) : -100);
+      const pct = (d) => Math.max(0, Math.min(100, ((d + 60) / 60) * 100));
+      mic.peakHold = Math.max(db(peak), mic.peakHold - 0.6);
+      $$('.lvl').forEach((el) => {
+        el.style.setProperty('--lvl', pct(db(rms) + 6) + '%');
+        el.style.setProperty('--peak', pct(mic.peakHold) + '%');
+        el.classList.toggle('hot', peak > 0.98);
+      });
+      // judge the level over the last few seconds of actual sound
+      const t = performance.now();
+      mic.recent.push([t, db(peak)]);
+      while (mic.recent.length && t - mic.recent[0][0] > 3000) mic.recent.shift();
+      const loud = Math.max(...mic.recent.map((r) => r[1]));
+      if (loud < -50) setMicHint('Say something to check the level.');
+      else if (loud > -0.5) setMicHint('Clipping. Turn the boost down a little.', 'bad');
+      else if (loud < -30) setMicHint('Very quiet. Turn the boost up.', 'warn');
+      else if (loud < -18) setMicHint('A bit quiet. Try some more boost.', 'warn');
+      else setMicHint('Good level.', 'good');
+      if (rec.on) drawRecMeter(Math.min(1, rms * 3.2));
+      mic.raf = requestAnimationFrame(loop);
+    };
+    loop();
+  }
+  const recHist = new Array(26).fill(0);
+  function drawRecMeter(lvl) {
+    const cv = $('#rec-meter');
+    const g = cv.getContext('2d');
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--fg').trim();
+    recHist.push(lvl); recHist.shift();
+    g.clearRect(0, 0, cv.width, cv.height);
+    const w = cv.width / recHist.length;
+    recHist.forEach((v, i) => {
+      const h = Math.max(3, v * cv.height);
+      g.fillStyle = v > 0.92 ? '#ff4d4d' : color;
+      g.globalAlpha = 0.25 + (i / recHist.length) * 0.75;
+      g.fillRect(i * w + 1.5, (cv.height - h) / 2, w - 3, h);
+    });
+    g.globalAlpha = 1;
+  }
+
+  function toggleRecord() { rec.on || rec.counting ? stopRecording() : startRecording(); }
   async function startRecording() {
     const l = current();
     if (!l) return toast('Open a lyric first', 'x');
     stopTake();
     if (lib.ui.rightHidden) togglePanel('right');
     setPane('takes');
-    try {
-      rec.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
-    } catch { return toast('No microphone available', 'x'); }
-    const c = LMAudio.ctx();
-    rec.analyser = c.createAnalyser();
-    rec.analyser.fftSize = 1024;
-    c.createMediaStreamSource(rec.stream).connect(rec.analyser);
+    try { await openMic(); } catch { return toast('No microphone available', 'x'); }
     const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
-    rec.mr = new MediaRecorder(rec.stream, { mimeType: mime, audioBitsPerSecond: 192000 });
+    rec.mr = new MediaRecorder(mic.dest.stream, { mimeType: mime, audioBitsPerSecond: 192000 });
     rec.chunks = [];
     rec.mr.ondataavailable = (e) => e.data.size && rec.chunks.push(e.data);
     rec.mr.onstop = finishRecording;
     rec.lyricId = l.id;
     rec.beatId = null; rec.beatOffset = null; rec.startedBeat = false;
     const b = player.beat;
-    if ($('#rec-with-beat').checked && b) {
+    const withBeat = $('#rec-with-beat').checked && b;
+
+    // one bar of clicks first, at the beat's tempo
+    if (S().countIn) {
+      rec.counting = true;
+      $('#rec-box').classList.add('count');
+      const bpm = (b?.kind === 'file' && b.bpm) || S().metroBpm || 90;
+      const counter = new LMAudio.Metronome();
+      counter.setBpm(bpm);
+      counter.beats = 4;
+      counter.volume = Math.max(0.3, metro.volume);
+      counter.onTick = (beat) => { $('#rec-time').textContent = String(4 - beat); };
+      counter.start();
+      await new Promise((r) => { rec.countT = setTimeout(r, (4 * 60000) / bpm - 30); });
+      counter.stop();
+      $('#rec-box').classList.remove('count');
+      if (!rec.counting) return; // stopped during the count-in
+      rec.counting = false;
+    }
+
+    if (withBeat) {
       if (b.kind === 'file') {
         if (audio.ended || (audio.duration && audio.currentTime >= audio.duration - 0.5)) audio.currentTime = 0;
         rec.beatId = b.id;
@@ -1543,16 +1910,22 @@ Load a beat and let it ride while the night gets colder
     $('#rec-sub').textContent = rec.beatId ? `Recording over “${b.name}”` : 'Recording…';
     $('#side-switch [data-pane="takes"]').classList.add('rec');
     rec.timer = setInterval(() => { $('#rec-time').textContent = fmtTime((performance.now() - rec.t0) / 1000); }, 200);
-    drawMeter();
   }
   function stopRecording() {
+    if (rec.counting) {
+      rec.counting = false;
+      clearTimeout(rec.countT);
+      $('#rec-box').classList.remove('count');
+      $('#rec-time').textContent = '0:00';
+      if (!mic.monitoring) closeMic();
+      return;
+    }
     if (!rec.on) return;
     rec.on = false;
     rec.duration = (performance.now() - rec.t0) / 1000;
     clearInterval(rec.timer);
-    cancelAnimationFrame(rec.raf);
     rec.mr.stop();
-    rec.stream.getTracks().forEach((t) => t.stop());
+    if (!mic.monitoring) closeMic();
     if (rec.startedBeat) {
       if (player.beat?.kind === 'file') audio.pause();
       else { stopEmbed(); setPlaying(false); }
@@ -1562,6 +1935,7 @@ Load a beat and let it ride while the night gets colder
     $('#rec-sub').textContent = 'Saving…';
     const cv = $('#rec-meter');
     cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+    recHist.fill(0);
   }
   async function finishRecording() {
     const blob = new Blob(rec.chunks, { type: 'audio/webm' });
@@ -1577,41 +1951,16 @@ Load a beat and let it ride while the night gets colder
     renderTakes();
     toast(`Take ${n} saved`, 'mic');
   }
-  function drawMeter() {
-    const cv = $('#rec-meter');
-    const g = cv.getContext('2d');
-    const data = new Uint8Array(rec.analyser.fftSize);
-    const hist = new Array(26).fill(0);
-    const color = getComputedStyle(document.documentElement).getPropertyValue('--fg').trim();
-    const loop = () => {
-      rec.analyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for (const v of data) { const x = (v - 128) / 128; sum += x * x; }
-      const lvl = Math.min(1, Math.sqrt(sum / data.length) * 3.2);
-      hist.push(lvl); hist.shift();
-      g.clearRect(0, 0, cv.width, cv.height);
-      const w = cv.width / hist.length;
-      hist.forEach((v, i) => {
-        const h = Math.max(3, v * cv.height);
-        g.fillStyle = v > 0.92 ? '#ff4d4d' : color;
-        g.globalAlpha = 0.25 + (i / hist.length) * 0.75;
-        g.fillRect(i * w + 1.5, (cv.height - h) / 2, w - 3, h);
-      });
-      g.globalAlpha = 1;
-      if (rec.on) rec.raf = requestAnimationFrame(loop);
-    };
-    loop();
-  }
 
   function renderTakes() {
     const l = current();
     const list = $('#takes-list');
     if (!l) { list.innerHTML = '<div class="bank-empty">Open a lyric to record takes.</div>'; return; }
     const takes = l.takes || [];
-    list.innerHTML = takes.length ? takes.map((t, i) => {
+    list._html = takes.length ? takes.map((t) => {
       const b = t.beatId && beat(t.beatId);
       const playing = tp.id === t.id;
-      return `<div class="take ${playing ? 'playing' : ''}" data-id="${t.id}" style="animation-delay:${Math.min(i, 20) * 30}ms">
+      return `<div class="take ${playing ? 'playing' : ''}" data-id="${t.id}" data-key="${t.id}">
         <div class="take-top">
           <button class="t-play" data-t="play" title="${b ? 'Play with the beat' : 'Play'}">${icon(playing ? 'pause' : 'play', 13)}</button>
           <div class="take-info"><div class="take-name">${esc(t.name)}</div>
@@ -1619,6 +1968,7 @@ Load a beat and let it ride while the night gets colder
           <button class="icon-btn" data-t="menu" title="More">${icon('more', 15)}</button>
         </div><div class="take-bar"><i></i></div></div>`;
     }).join('') : `<div class="rh-empty" style="padding:30px 10px">${logo(44, 'pulse')}No takes yet. Hit record and spit your verse.</div>`;
+    renderKeyed(list, list._html);
   }
   async function playTake(t) {
     if (tp.id === t.id) return stopTake();
@@ -1688,6 +2038,14 @@ Load a beat and let it ride while the night gets colder
   }
   function bindTakes() {
     $('#rec-btn').onclick = toggleRecord;
+    $('#rec-countin').checked = !!S().countIn;
+    $('#rec-countin').onchange = (e) => { S().countIn = e.target.checked; persist(); };
+    $('#takes-boost').value = S().micBoost || 0;
+    setMicBoost(S().micBoost || 0);
+    $('#takes-boost').oninput = (e) => setMicBoost(+e.target.value);
+    $('#mic-check').onclick = toggleMicCheck;
+    $('#mic-settings').onclick = () => { setView('settings'); setTimeout(() => $('#set-recording')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); };
+    refreshMicName().catch(() => {});
     const list = $('#takes-list');
     const find = (el) => current()?.takes?.find((x) => x.id === el.closest('.take')?.dataset.id);
     list.addEventListener('click', (e) => {
@@ -1737,15 +2095,16 @@ Load a beat and let it ride while the night gets colder
     const el = $('#history-list');
     if (!l) { el.innerHTML = '<div class="bank-empty">Open a lyric to see its versions.</div>'; return; }
     const hs = l.history || [];
-    el.innerHTML = hs.length ? hs.map((h, i) => {
+    el._html = hs.length ? hs.map((h, i) => {
       const same = h.body === l.body;
       const d = same ? null : lineDiff(h.body, l.body);
       const add = d ? d.filter((o) => o.t === '+').length : 0, del = d ? d.filter((o) => o.t === '-').length : 0;
       const when = new Date(h.t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      return `<div class="hist" data-id="${h.id}" style="animation-delay:${Math.min(i, 20) * 25}ms">${icon(h.named ? 'starFill' : 'history', 15)}
+      return `<div class="hist" data-id="${h.id}" data-key="${h.id}">${icon(h.named ? 'starFill' : 'history', 15)}
         <div class="h-info"><div class="h-name">${esc(h.label || 'Auto-save')}</div>
         <div class="h-meta">${when}${same ? ' · same as now' : d ? ` · <span class="plus">+${add}</span> <span class="minus">−${del}</span> since` : ''}</div></div></div>`;
     }).join('') : '<div class="bank-empty">No versions yet. They appear as you write.</div>';
+    renderKeyed(el, el._html);
   }
   async function openVersion(h) {
     const l = current();
@@ -1791,37 +2150,84 @@ Load a beat and let it ride while the night gets colder
   }
 
   // ================= Metronome =================
+  // With a beat file loaded the click locks to the beat's grid and plays while the beat plays. Without one it runs
+  // on its own.
   const metro = new LMAudio.Metronome();
   const metroTaps = [];
+  const fmtBpm = (v) => String(Math.round(v * 100) / 100);
+  const syncBeat = () => (player.beat?.kind === 'file' && player.beat.bpm ? player.beat : null);
+  function metroSync() {
+    if (pf.on) return; // perform mode runs its own click
+    if (!st.metroOn) {
+      metro.stop();
+      $$('#mt-beats i').forEach((i) => i.classList.remove('on', 'down'));
+    } else {
+      const b = syncBeat();
+      if (b) { metro.setBpm(b.bpm); metro.follow(() => (audio.paused ? null : audio.currentTime), b.offset || 0); }
+      else { metro.setBpm(S().metroBpm || 90); metro.start(); }
+    }
+    $('#metro-btn').classList.toggle('on', !!st.metroOn);
+    if ($('#metro-menu').classList.contains('open')) renderMetroMenu();
+  }
   function metroToggle(force) {
-    const on = force ?? !metro.running;
-    if (on) metro.start(); else metro.stop();
-    $('#metro-btn').classList.toggle('on', on);
-    const t = $('#mt-on'); if (t) t.checked = on;
-    if (!on) $$('#mt-beats i').forEach((i) => i.classList.remove('on', 'down'));
+    st.metroOn = force ?? !st.metroOn;
+    metroSync();
+  }
+  // A new tempo moves the beat's grid along with it.
+  function setBeatBpm(b, v) {
+    if (!v) { b.bpm = null; b.grid = 0; persist(); return; }
+    b.bpm = Math.max(40, Math.min(240, Math.round(v * 100) / 100));
+    b.bpmAuto = false;
+    if (wave.buf && player.beat?.id === b.id) b.offset = LMAudio.analyzeBeat(wave.buf, b.bpm)?.offset ?? b.offset;
+    persist();
+    updateBpmLabel();
+    renderMeta();
+    if (player.beat?.id === b.id) $('#pl-kind').textContent = `${KIND_LABEL[b.kind]} · ${fmtBpm(b.bpm)} BPM`;
+    if (st.view === 'beats') renderBeats();
+    metroSync();
   }
   function setMetroBpm(v) {
-    metro.setBpm(Math.round(v) || 90);
-    S().metroBpm = metro.bpm;
-    const inp = $('#mt-bpm'); if (inp && +inp.value !== metro.bpm) inp.value = metro.bpm;
+    const b = syncBeat();
+    if (b) return setBeatBpm(b, v);
+    S().metroBpm = Math.max(30, Math.min(300, Math.round(v) || 90));
     persist();
+    metroSync();
   }
-  function beatBpm() { const l = current(); return (l?.beatId && beat(l.beatId)?.bpm) || player.beat?.bpm || null; }
+  function nudgeGrid(seconds) {
+    const b = syncBeat();
+    if (!b) return;
+    const bar = (60 / b.bpm) * metro.beats;
+    b.offset = Math.round(((((b.offset || 0) + seconds) % bar) + bar) % bar * 1000) / 1000;
+    persist();
+    metroSync();
+  }
   function renderMetroMenu() {
-    if (!metro.running && beatBpm()) metro.setBpm(beatBpm());
-    const bb = beatBpm();
+    const b = syncBeat();
+    const bpm = b ? b.bpm : S().metroBpm || 90;
     $('#metro-menu').innerHTML = `
-      <div class="m-row"><span class="m-title">Metronome</span><label class="toggle"><input type="checkbox" id="mt-on" ${metro.running ? 'checked' : ''}/><span></span></label></div>
-      <div class="metro-bpm"><button class="icon-btn" data-mt="-" title="Slower (Shift: -5)">${icon('minus', 16)}</button>
-        <input id="mt-bpm" type="number" min="30" max="300" value="${metro.bpm}"/>
-        <button class="icon-btn" data-mt="+" title="Faster (Shift: +5)">${icon('plus', 16)}</button></div>
+      <div class="m-row"><span class="m-title">Metronome</span><span class="m-head-acts"><label class="toggle"><input type="checkbox" id="mt-on" ${st.metroOn ? 'checked' : ''}/><span></span></label>
+        <button class="icon-btn xs" data-mt="close" title="Close">${icon('x', 14)}</button></span></div>
+      ${b ? `<div class="mt-sync">${icon('link', 13)}<span>Locked to <b>${esc(b.name)}</b>. It clicks along while the beat plays.</span></div>` : ''}
+      <div class="metro-bpm"><button class="icon-btn" data-mt="-" title="Slower (Shift: ${b ? '0.1' : '5'})">${icon('minus', 16)}</button>
+        <input id="mt-bpm" type="number" min="30" max="300" step="${b ? 0.01 : 1}" value="${fmtBpm(bpm)}"/>
+        <button class="icon-btn" data-mt="+" title="Faster (Shift: ${b ? '0.1' : '5'})">${icon('plus', 16)}</button></div>
+      ${b ? `<div class="mt-row-btns"><button class="btn ghost sm" data-mt="half">Half tempo</button><button class="btn ghost sm" data-mt="double">Double tempo</button></div>` : ''}
       <div class="metro-beats" id="mt-beats">${'<i></i>'.repeat(metro.beats)}</div>
       <div class="m-row"><span>Beats per bar</span><div class="seg" id="mt-sig">${[3, 4, 6].map((n) => `<button data-n="${n}" class="${metro.beats === n ? 'active' : ''}">${n}</button>`).join('')}</div></div>
+      ${b ? `<div class="m-row"><span>Line up</span><span class="mt-nudge">
+          <button class="btn ghost sm" data-mt="early" title="Clicks 10 ms earlier">-10 ms</button>
+          <button class="btn ghost sm" data-mt="late" title="Clicks 10 ms later">+10 ms</button></span></div>
+        <div class="m-row"><span>Beat 1</span><span class="mt-nudge">
+          <button class="btn ghost sm" data-mt="prevbeat" title="Accent one beat earlier">${icon('chevronLeft', 13)}</button>
+          <button class="btn ghost sm" data-mt="nextbeat" title="Accent one beat later">${icon('chevron', 13)}</button>
+          <button class="btn ghost sm" data-mt="detect" title="Find the tempo and the grid again">Re-detect</button></span></div>` : ''}
       <div class="m-row"><span>Volume</span><input type="range" id="mt-vol" min="0" max="100" value="${Math.round(metro.volume * 100)}"/></div>
-      <div class="m-row"><button class="btn sm" data-mt="tap">Tap tempo</button>${bb ? `<button class="btn ghost sm" data-mt="sync" title="Use the beat's tempo">Beat: ${bb}</button>` : ''}</div>`;
+      ${b ? '' : '<div class="m-row"><button class="btn sm" data-mt="tap">Tap tempo</button></div>'}`;
     setRangeFill($('#mt-vol'));
+    requestAnimationFrame(() => inkSegs($('#metro-menu')));
   }
   function bindMetronome() {
+    st.metroOn = false;
     metro.setBpm(S().metroBpm || 90);
     metro.volume = (S().metroVol ?? 50) / 100;
     metro.beats = S().metroBeats || 4;
@@ -1846,25 +2252,38 @@ Load a beat and let it ride while the night gets colder
     });
     m.addEventListener('keydown', (e) => { if (e.target.id === 'mt-bpm' && e.key === 'Enter') setMetroBpm(+e.target.value); });
     m.addEventListener('click', (e) => {
-      const b = e.target.closest('[data-mt]');
+      const btn = e.target.closest('[data-mt]');
       const sig = e.target.closest('#mt-sig button');
       if (sig) {
         metro.beats = +sig.dataset.n; S().metroBeats = metro.beats; persist();
+        metroSync();
         renderMetroMenu();
-        if (metro.running) metroToggle(true);
         return;
       }
-      if (!b) return;
-      const a = b.dataset.mt;
-      if (a === '+' || a === '-') setMetroBpm(metro.bpm + (a === '+' ? 1 : -1) * (e.shiftKey ? 5 : 1));
-      if (a === 'sync') setMetroBpm(beatBpm());
+      if (!btn) return;
+      const a = btn.dataset.mt;
+      const b = syncBeat();
+      const bpm = b ? b.bpm : S().metroBpm || 90;
+      if (a === 'close') return m.classList.remove('open');
+      if (a === '+' || a === '-') setMetroBpm(bpm + (a === '+' ? 1 : -1) * (e.shiftKey ? (b ? 0.1 : 5) : 1));
+      if (a === 'half' && b) setBeatBpm(b, b.bpm / 2);
+      if (a === 'double' && b) setBeatBpm(b, b.bpm * 2);
+      if (a === 'early') nudgeGrid(-0.01);
+      if (a === 'late') nudgeGrid(0.01);
+      if (a === 'prevbeat' && b) nudgeGrid(-60 / b.bpm);
+      if (a === 'nextbeat' && b) nudgeGrid(60 / b.bpm);
+      if (a === 'detect' && b) {
+        if (!wave.buf) return toast('The beat is still loading', 'metronome');
+        const g = LMAudio.analyzeBeat(wave.buf);
+        if (g) { b.bpm = g.bpm; b.offset = g.offset; b.bpmAuto = true; b.grid = 2; persist(); updateBpmLabel(); renderMeta(); metroSync(); toast(`${fmtBpm(g.bpm)} BPM`, 'metronome'); }
+      }
       if (a === 'tap') {
         const t = performance.now();
         if (metroTaps.length && t - metroTaps[metroTaps.length - 1] > 2000) metroTaps.length = 0;
         metroTaps.push(t);
         if (metroTaps.length > 6) metroTaps.shift();
         if (metroTaps.length >= 3) setMetroBpm(60000 / ((metroTaps[metroTaps.length - 1] - metroTaps[0]) / (metroTaps.length - 1)));
-        b.classList.remove('hit'); void b.offsetWidth; b.classList.add('hit');
+        btn.classList.remove('hit'); void btn.offsetWidth; btn.classList.add('hit');
       }
     });
   }
@@ -1876,10 +2295,11 @@ Load a beat and let it ride while the night gets colder
     if (!l) return toast('Open a lyric first', 'x');
     stopTake();
     if (rec.on) stopRecording();
-    pf.hadMetro = metro.running;
-    if (metro.running) metroToggle(false);
+    pf.hadMetro = !!st.metroOn;
+    metro.stop();
     const b = player.beat;
     pf.useAudio = !!(b && b.kind === 'file');
+    pf.offset = pf.useAudio ? b.offset || 0 : 0;
     $('#pf-bpm').value = (l.beatId && beat(l.beatId)?.bpm) || b?.bpm || metro.bpm || 90;
     $('#pf-intro').value = l.perfIntro ?? (pf.useAudio ? 0 : 1);
     $('#pf-click').checked = pf.useAudio ? false : S().pfClick ?? true;
@@ -1906,10 +2326,12 @@ Load a beat and let it ride while the night gets colder
     pfPause();
     pf.on = false;
     cancelAnimationFrame(pf.raf);
-    $('#perform').hidden = true;
+    const ov = $('#perform');
+    ov.classList.add('out');
+    setTimeout(() => { ov.hidden = true; ov.classList.remove('out'); }, 200);
     const l = current();
     if (l) { l.perfIntro = +$('#pf-intro').value || 0; persist(); }
-    if (pf.hadMetro) metroToggle(true);
+    metroSync();
   }
   function pfTime() {
     if (pf.useAudio) {
@@ -1923,6 +2345,11 @@ Load a beat and let it ride while the night gets colder
   const pfBpm = () => Math.max(40, Math.min(240, +$('#pf-bpm').value || 90));
   function pfStartClick() {
     if (!$('#pf-click').checked || pf.paused) return metro.stop();
+    if (pf.useAudio) {
+      metro.setBpm(pfBpm());
+      metro.beats = 4;
+      return metro.follow(() => (audio.paused ? null : audio.currentTime), pf.offset);
+    }
     const c = LMAudio.ctx();
     const spb = 60 / pfBpm();
     metro.setBpm(pfBpm());
@@ -1944,7 +2371,6 @@ Load a beat and let it ride while the night gets colder
     pf.paused = true;
     metro.stop();
     metro.beats = S().metroBeats || 4;
-    metro.setBpm(S().metroBpm || 90);
     $('#pf-play').innerHTML = icon('play', 16);
   }
   function pfReset() {
@@ -1959,8 +2385,9 @@ Load a beat and let it ride while the night gets colder
     const spb = 60 / pfBpm(), barDur = spb * 4;
     const intro = +$('#pf-intro').value || 0;
     const t = Math.max(0, pfTime());
-    const beatIn = Math.floor(t / spb + 1e-6) % 4;
-    const barF = t / barDur - intro;
+    const g = t - pf.offset; // time on the beat's grid
+    const beatIn = ((Math.floor(g / spb + 1e-6) % 4) + 4) % 4;
+    const barF = g / barDur - intro;
     const bar = Math.floor(barF) + pf.manual;
     $$('#pf-beats i').forEach((el, i) => el.classList.toggle('on', !pf.paused && i === beatIn));
     $('#pf-prog').style.width = (t === 0 ? 0 : (((barF % 1) + 1) % 1) * 100) + '%';
@@ -2005,25 +2432,37 @@ Load a beat and let it ride while the night gets colder
   const wave = { peaks: null, ab: null, half: null, raf: 0, selecting: false };
   async function prepareWave(b) {
     wave.peaks = b.peaks || null;
+    wave.buf = null;
     wave.ab = null; wave.half = null;
     updateAbBtn();
     drawWave();
-    if (b.peaks && b.bpm) return;
     try {
       const buf = await LMAudio.decode(await api.readMedia('beat', b.file));
-      if (!b.peaks) { b.peaks = LMAudio.peaks(buf, 480); b.duration = buf.duration; }
-      if (!b.bpm) {
-        const bpm = LMAudio.detectBpm(buf);
-        if (bpm) {
-          b.bpm = bpm; b.bpmAuto = true;
-          toast(`Detected about ${bpm} BPM`, 'metronome');
-          if (player.beat?.id === b.id) { updateBpmLabel(); $('#pl-kind').textContent = `${KIND_LABEL[b.kind]} · ${bpm} BPM`; }
-          renderMeta();
+      if (player.beat?.id !== b.id) return;
+      wave.buf = buf;
+      let changed = false;
+      if (!b.peaks) { b.peaks = LMAudio.peaks(buf, 480); b.duration = buf.duration; changed = true; }
+      if (b.grid !== 2) {
+        // a tempo you typed, tapped or that came with the file name stays; only its grid is found
+        const manual = !!b.bpm && !b.bpmAuto;
+        const g = LMAudio.analyzeBeat(buf, manual ? b.bpm : null);
+        if (g) {
+          if (!manual) { b.bpm = g.bpm; b.bpmAuto = true; toast(`Detected ${fmtBpm(g.bpm)} BPM`, 'metronome'); }
+          b.offset = g.offset;
+          b.grid = 2;
+          changed = true;
         }
       }
-      persist();
-      if (player.beat?.id === b.id) { wave.peaks = b.peaks; drawWave(); }
-      if (st.view === 'beats') renderBeats();
+      if (changed) {
+        persist();
+        updateBpmLabel();
+        renderMeta();
+        $('#pl-kind').textContent = `${KIND_LABEL[b.kind]}${b.bpm ? ` · ${fmtBpm(b.bpm)} BPM` : ''}`;
+        if (st.view === 'beats') renderBeats();
+        metroSync();
+      }
+      wave.peaks = b.peaks;
+      drawWave();
     } catch {}
   }
   function drawWave() {
@@ -2185,6 +2624,16 @@ Load a beat and let it ride while the night gets colder
     }));
     $('#toggle-left').onclick = () => togglePanel('left');
     $('#toggle-right').onclick = () => togglePanel('right');
+    $('#left-close').onclick = () => togglePanel('left');
+    $('#right-close').onclick = () => togglePanel('right');
+    $('#edge-left').onclick = () => togglePanel('left');
+    $('#edge-right').onclick = () => togglePanel('right');
+    $('#embed-wrap').addEventListener('click', (e) => {
+      const a = e.target.closest('[data-e]')?.dataset.e;
+      if (a === 'min') $('#embed-wrap').classList.add('collapsed');
+      if (a === 'close') { stopEmbed(); setPlaying(false); }
+    });
+    bindEditMenu();
     $('#export-btn').onclick = () => $('#export-menu').classList.toggle('open');
     $('#export-menu').onclick = (e) => {
       const b = e.target.closest('[data-ex]'); if (!b) return;
@@ -2192,8 +2641,302 @@ Load a beat and let it ride while the night gets colder
       ({ txt: exportLyric, pdf: exportPdf, copy: copyLyric })[b.dataset.ex]();
     };
     $('#add-word').onclick = () => addWordModal();
-    bindNotes(); bindTakes(); bindHistory(); bindMetronome(); bindPerform(); bindWave();
+    bindNotes(); bindTakes(); bindHistory(); bindMetronome(); bindPerform(); bindWave(); bindSpelling();
     setPanels();
+  }
+
+  // ================= Spelling =================
+  // Offline: a word list of about 280,000 words ranked by how often people use them, plus the slang library and
+  // your own dictionary. Off only underlines, Suggest also shows fixes on hover, Auto fixes words as you type.
+  const spell = { words: null, cache: new Map(), ignore: new Set(), skip: null, flash: null, fixed: null, showT: 0, hideT: 0, raf: 0, pop: null };
+  let dictSet = new Set();
+  const spellReady = () => !!spell.words && engine.ready;
+  const ALPHA = "abcdefghijklmnopqrstuvwxyz'";
+
+  async function loadSpelling() {
+    const text = await api.loadSpellWords();
+    const words = new Map();
+    for (const line of text.split('\n')) {
+      const tab = line.indexOf('\t');
+      if (tab < 0) words.set(line, 0); else words.set(line.slice(0, tab), +line.slice(tab + 1));
+    }
+    spell.words = words;
+    spell.cache.clear();
+    scheduleBackdrop();
+  }
+
+  function knownWord(w) {
+    const k = (x) => spell.words.has(x) || engine.slang.has(x) || engine.words.has(x) || dictSet.has(x) || spell.ignore.has(x);
+    if (k(w)) return true;
+    const bare = w.replace(/^'+|'+$/g, '');
+    if (bare !== w && k(bare)) return true;
+    if (/in'?$/.test(w)) { const stem = w.replace(/in'?$/, ''); if (k(stem + 'ing') || k(stem + 'in')) return true; } // trappin, trappin'
+    if (/'s$/.test(w) && k(w.slice(0, -2))) return true;
+    if (/s'$/.test(w) && k(w.slice(0, -1))) return true;
+    return false;
+  }
+  function isMisspelled(word, firstInLine) {
+    if (word.length < 2 || /\d/.test(word)) return false;
+    if (/^[A-Z][a-z']/.test(word) && !firstInLine) return false; // a name or a place
+    if (word.length <= 5 && word === word.toUpperCase()) return false; // ATL, VVS
+    const w = word.toLowerCase().replace(/’/g, "'");
+    if (spell.cache.has(w)) return spell.cache.get(w);
+    const bad = !knownWord(w);
+    spell.cache.set(w, bad);
+    return bad;
+  }
+
+  function edits1(w) {
+    const out = new Set();
+    for (let i = 0; i <= w.length; i++) {
+      const a = w.slice(0, i), b = w.slice(i);
+      if (b) out.add(a + b.slice(1));
+      if (b.length > 1) out.add(a + b[1] + b[0] + b.slice(2));
+      for (const c of ALPHA) { if (b) out.add(a + c + b.slice(1)); out.add(a + c + b); }
+    }
+    out.delete(w);
+    return out;
+  }
+  const matchCase = (orig, w) => (orig.length > 1 && orig === orig.toUpperCase() ? w.toUpperCase()
+    : /^[A-Z]/.test(orig) ? w[0].toUpperCase() + w.slice(1) : w);
+  function suggest(word, limit = 6) {
+    const w = word.toLowerCase().replace(/’/g, "'");
+    const known = (x) => spell.words.has(x) || engine.slang.has(x) || dictSet.has(x);
+    const score = (x) => (engine.slang.has(x) ? 50 : 0) + (spell.words.get(x) || engine.freq(x) || 0);
+    const first = edits1(w);
+    const fits = (x) => x.length >= Math.min(3, w.length); // "teh" shouldn't suggest "th"
+    const cands = [...first].filter((x) => known(x) && fits(x)).map((x) => [x, 1]);
+    if (cands.length < 3 && w.length <= 12) {
+      const seen = new Set(cands.map((c) => c[0]));
+      for (const e1 of first) for (const e2 of edits1(e1)) {
+        if (e2 !== w && !seen.has(e2) && fits(e2) && known(e2)) { seen.add(e2); cands.push([e2, 2]); }
+      }
+    }
+    cands.sort((a, b) => a[1] - b[1] || score(b[0]) - score(a[0]));
+    return cands.slice(0, limit).map(([x, dist]) => ({ word: matchCase(word, x), dist, freq: score(x) }));
+  }
+  // The fix Auto mode makes: only when one answer clearly wins.
+  function bestFix(word) {
+    const [a, b] = suggest(word, 3);
+    if (!a) return null;
+    if (a.dist === 2 && (word.length < 5 || a.freq < 50)) return null;
+    if (b && b.dist === a.dist && b.freq * 3 > a.freq) return null;
+    return a.word;
+  }
+
+  function replaceRange(start, end, text, expect) {
+    if (expect != null && pad.value.slice(start, end) !== expect) return false;
+    pad.focus();
+    pad.setSelectionRange(start, end);
+    document.execCommand('insertText', false, text);
+    return true;
+  }
+  function addToDictionary(word) {
+    const w = word.toLowerCase();
+    if (!lib.dictionary.includes(w)) lib.dictionary.push(w);
+    dictSet.add(w);
+    spell.cache.delete(w);
+    persist();
+    scheduleBackdrop();
+    toast(`Added “${word}” to your dictionary`, 'book');
+  }
+  function ignoreWord(word) {
+    spell.ignore.add(word.toLowerCase());
+    spell.cache.delete(word.toLowerCase());
+    scheduleBackdrop();
+  }
+
+  // Auto mode: the word before the cursor is fixed when you finish it with space, Enter or punctuation.
+  function autoCorrect() {
+    const pos = pad.selectionStart;
+    if (pos !== pad.selectionEnd) return;
+    const before = pad.value.slice(0, pos);
+    const m = before.match(/[A-Za-z][A-Za-z']*$/);
+    if (!m) return;
+    const word = m[0];
+    const lineStart = before.lastIndexOf('\n') + 1;
+    const lineEnd = pad.value.indexOf('\n', pos);
+    if (SECTION_RE.test(pad.value.slice(lineStart, lineEnd < 0 ? undefined : lineEnd))) return;
+    const first = !before.slice(lineStart, pos - word.length).trim();
+    if (word.length < 3 || spell.ignore.has(word.toLowerCase()) || !isMisspelled(word, first)) return;
+    const fix = bestFix(word);
+    if (!fix || fix === word) return;
+    const start = pos - word.length;
+    replaceRange(start, pos, fix);
+    spell.fixed = { from: word, to: fix, at: now() };
+    spell.flash = { start, until: now() + 900 };
+    setTimeout(scheduleBackdrop, 950);
+  }
+
+  // Finds the underlined word under the mouse through the backdrop, where misspelled words are marked.
+  function spellAt(x, y) {
+    const bd = $('#backdrop');
+    pad.style.pointerEvents = 'none';
+    bd.style.pointerEvents = 'auto';
+    const r = document.caretRangeFromPoint(x, y);
+    pad.style.pointerEvents = '';
+    bd.style.pointerEvents = '';
+    const el = r && r.startContainer.parentElement?.closest('mark.sp');
+    if (!el) return null;
+    const li = +el.dataset.li, at = +el.dataset.at;
+    const lines = pad.value.split('\n');
+    const m = (lines[li] || '').slice(at).match(/^[A-Za-z0-9][A-Za-z0-9'’]*/);
+    if (!m) return null;
+    let start = at;
+    for (let i = 0; i < li; i++) start += lines[i].length + 1;
+    return { word: m[0], start, end: start + m[0].length, el };
+  }
+
+  function hideSpellPop() {
+    clearTimeout(spell.showT);
+    const pop = $('#spell-pop');
+    spell.pop = null;
+    if (pop.hidden || pop.classList.contains('out')) return;
+    pop.classList.add('out');
+    setTimeout(() => { if (!spell.pop) { pop.hidden = true; pop.classList.remove('out'); } }, 140);
+  }
+  function showSpellPop(hit) {
+    const pop = $('#spell-pop');
+    const sugs = suggest(hit.word, 5);
+    spell.pop = hit;
+    pop.classList.remove('out');
+    pop.innerHTML = `<div class="sp-head">${sugs.length ? 'Did you mean' : `No suggestions for “${esc(hit.word)}”`}</div>
+      ${sugs.map((x, i) => `<button class="sp-sug" data-i="${i}">${esc(x.word)}</button>`).join('')}
+      <div class="sp-acts"><button data-a="add">${icon('plus', 13)}Add to dictionary</button><button data-a="ignore">${icon('x', 13)}Ignore</button></div>`;
+    pop._sugs = sugs;
+    pop.hidden = false;
+    const r = hit.el.getBoundingClientRect();
+    const w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+    pop.style.top = (r.bottom + h + 12 > innerHeight ? r.top - h - 6 : r.bottom + 6) + 'px';
+  }
+  function bindSpelling() {
+    pad.addEventListener('keydown', (e) => {
+      if (S().spelling !== 'auto' || e.ctrlKey || e.altKey || e.metaKey || e.isComposing || !spellReady()) return;
+      if (e.key === ' ' || e.key === 'Enter' || /^[.,!?;:)]$/.test(e.key)) autoCorrect();
+    });
+    // Ctrl+Z right after a fix puts your word back, and Lemonade leaves it alone from then on
+    pad.addEventListener('beforeinput', (e) => {
+      if (e.inputType === 'historyUndo' && spell.fixed && now() - spell.fixed.at < 10000) {
+        spell.ignore.add(spell.fixed.from.toLowerCase());
+        spell.cache.delete(spell.fixed.from.toLowerCase());
+        spell.fixed = null;
+      }
+    });
+    pad.addEventListener('mousemove', (e) => {
+      if (S().spelling === 'off' || !spellReady()) return;
+      spell.mx = e.clientX; spell.my = e.clientY;
+      if (spell.raf) return;
+      spell.raf = requestAnimationFrame(() => {
+        spell.raf = 0;
+        const hit = spellAt(spell.mx, spell.my);
+        if (hit && spell.pop && hit.start === spell.pop.start) { clearTimeout(spell.hideT); return; }
+        clearTimeout(spell.showT);
+        if (!hit) { clearTimeout(spell.hideT); spell.hideT = setTimeout(hideSpellPop, 260); return; }
+        spell.showT = setTimeout(() => showSpellPop(hit), 380);
+      });
+    });
+    pad.addEventListener('mouseleave', () => { clearTimeout(spell.showT); spell.hideT = setTimeout(hideSpellPop, 260); });
+    pad.addEventListener('keydown', () => hideSpellPop());
+    const pop = $('#spell-pop');
+    pop.addEventListener('mouseenter', () => clearTimeout(spell.hideT));
+    pop.addEventListener('mouseleave', () => { spell.hideT = setTimeout(hideSpellPop, 260); });
+    pop.addEventListener('mousedown', (e) => e.preventDefault()); // keep the cursor in the lyric
+    pop.addEventListener('click', (e) => {
+      const hit = spell.pop;
+      if (!hit) return;
+      const s = e.target.closest('.sp-sug');
+      const a = e.target.closest('[data-a]')?.dataset.a;
+      if (s) replaceRange(hit.start, hit.end, pop._sugs[+s.dataset.i].word, hit.word);
+      if (a === 'add') addToDictionary(hit.word);
+      if (a === 'ignore') ignoreWord(hit.word);
+      if (s || a) hideSpellPop();
+    });
+  }
+
+  // ================= Right-click menu for text =================
+  function bindEditMenu() {
+    ctx.addEventListener('mousedown', (e) => e.preventDefault()); // keeps the text field focused while a menu item runs
+    document.addEventListener('contextmenu', (e) => {
+      const t = e.target;
+      if (!t.matches || !t.matches('textarea, input:not([type=checkbox]):not([type=range]):not([type=color]):not([type=number])')) return;
+      e.preventDefault();
+      hideSpellPop();
+      const items = [];
+      if (t === pad && spellReady()) {
+        const hit = spellAt(e.clientX, e.clientY);
+        if (hit) {
+          const sugs = suggest(hit.word, 5);
+          items.push({ head: sugs.length ? 'Did you mean' : `“${hit.word}” isn't in the dictionary` });
+          for (const x of sugs) items.push({ label: x.word, icon: 'check', strong: true, run: () => replaceRange(hit.start, hit.end, x.word, hit.word) });
+          items.push({ label: 'Add to dictionary', icon: 'plus', run: () => addToDictionary(hit.word) });
+          items.push({ label: 'Ignore', icon: 'x', run: () => ignoreWord(hit.word) });
+          items.push('-');
+        }
+      }
+      const sel = t.selectionStart !== t.selectionEnd;
+      items.push({ label: 'Cut', icon: 'cut', kbd: 'Ctrl+X', disabled: !sel, run: () => api.edit('cut') });
+      items.push({ label: 'Copy', icon: 'copy', kbd: 'Ctrl+C', disabled: !sel, run: () => api.edit('copy') });
+      items.push({ label: 'Paste', icon: 'paste', kbd: 'Ctrl+V', run: () => api.edit('paste') });
+      items.push('-');
+      items.push({ label: 'Select all', icon: 'selectAll', kbd: 'Ctrl+A', run: () => { t.focus(); t.select(); } });
+      showCtx(e.clientX, e.clientY, items);
+    });
+  }
+
+  // ================= Text files in and out =================
+  const cleanName = (s) => (s || '').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || 'Untitled';
+  const lyricText = (l) => (l.title ? l.title + '\n\n' : '') + l.body;
+
+  // Each text file becomes a lyric named after the file. A title line that repeats the file name is dropped.
+  function importTextFiles(files, projectId, folderId) {
+    if (!files.length) return [];
+    if (!projectId || !project(projectId) || project(projectId).archived) {
+      const cur = current();
+      projectId = cur && lyricVisible(cur) ? cur.projectId : lib.projects.find((p) => !p.archived)?.id;
+      folderId = cur && lyricVisible(cur) ? cur.folderId : null;
+    }
+    if (!projectId) {
+      const p = { id: uid(), name: 'My Songs', created: now(), updated: now(), archived: false };
+      lib.projects.push(p);
+      projectId = p.id;
+    }
+    const made = files.map(({ name, text }) => {
+      const title = name.replace(/\.[^.]+$/, '').trim() || 'Untitled';
+      let lines = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n').split('\n');
+      if (lines[0]?.trim() === title) lines = lines.slice(lines[1]?.trim() === '' ? 2 : 1);
+      const l = { id: uid(), projectId, folderId: folderId || null, title, body: lines.join('\n').replace(/\s+$/, '') + '\n', beatId: null,
+        created: now(), updated: now(), archived: false, bank: [], takes: [], history: [], notes: '' };
+      lib.lyrics.push(l);
+      return l;
+    });
+    toggleOpen(projectId, true);
+    if (folderId) toggleOpen(folderId, true);
+    persist();
+    if (st.view !== 'write') setView('write');
+    renderTree();
+    openLyric(made[0].id);
+    toast(made.length === 1 ? `Imported “${made[0].title}”` : `Imported ${made.length} lyrics`, 'file');
+    return made;
+  }
+  async function importTextDialog(projectId, folderId) {
+    const files = await api.importText();
+    if (files.length) importTextFiles(files, projectId, folderId);
+  }
+  // Saves a project or folder as one text file per lyric into a folder you pick.
+  async function exportGroup(type, item) {
+    const ls = lib.lyrics.filter((l) => !l.archived && (type === 'project' ? l.projectId === item.id : l.folderId === item.id));
+    if (!ls.length) return toast('Nothing to save yet', 'x');
+    const used = new Set();
+    const files = ls.map((l) => {
+      const dir = type === 'project' && l.folderId && folder(l.folderId) ? cleanName(folder(l.folderId).name) + '/' : '';
+      let name = cleanName(l.title), n = 2;
+      while (used.has((dir + name).toLowerCase())) name = `${cleanName(l.title)} (${n++})`;
+      used.add((dir + name).toLowerCase());
+      return { path: `${dir}${name}.txt`, text: lyricText(l) };
+    });
+    const r = await api.exportFolder(cleanName(item.name), files);
+    if (r) toast(`Saved ${files.length} lyric${files.length === 1 ? '' : 's'} to ${r}`, 'download');
   }
 
   // ================= Updates =================
@@ -2253,9 +2996,22 @@ Load a beat and let it ride while the night gets colder
   }
 
   // ================= Keyboard =================
+  // Escape closes one thing at a time, the one on top first.
+  function closeTopmost() {
+    if (ctx.classList.contains('open')) return hideCtx();
+    const menu = $('.menu.open');
+    if (menu) return menu.classList.remove('open');
+    if (!$('#spell-pop').hidden) return hideSpellPop();
+    if (!$('#def-card').hidden) return hideDef();
+    if (st.view === 'dictionary' && $('.lookup-card')) return closeLookup();
+    const emb = $('#embed-wrap');
+    if (player.embed && !emb.classList.contains('collapsed')) return emb.classList.add('collapsed');
+    if (document.body.classList.contains('focus')) return toggleFocus(false);
+  }
+
   function toggleFocus(force) {
     const on = force ?? !document.body.classList.contains('focus');
-    document.body.classList.toggle('focus', on);
+    crossfade(() => document.body.classList.toggle('focus', on));
     $('#focus-btn').classList.toggle('on', on);
     requestAnimationFrame(() => { syncBackdropSize(); renderBackdrop(); });
     if (on) { setView('write'); pad.focus(); toast('Focus mode · Esc to exit', 'focus'); }
@@ -2272,16 +3028,12 @@ Load a beat and let it ride while the night gets colder
     else if (e.ctrlKey && e.code === 'Space') { e.preventDefault(); togglePlay(); }
     else if (e.ctrlKey && ['1', '2', '3', '4'].includes(k)) { e.preventDefault(); setView(['write', 'beats', 'dictionary', 'archive'][+k - 1]); }
     else if (e.ctrlKey && k === ',') { e.preventDefault(); setView('settings'); }
-    else if (e.ctrlKey && k === 'm') { e.preventDefault(); metroToggle(); toast(metro.running ? `Metronome on · ${metro.bpm} BPM` : 'Metronome off', 'metronome'); }
+    else if (e.ctrlKey && k === 'm') { e.preventDefault(); metroToggle(); toast(st.metroOn ? `Metronome on · ${fmtBpm(metro.bpm)} BPM${syncBeat() ? ', locked to the beat' : ''}` : 'Metronome off', 'metronome'); }
     else if (e.ctrlKey && k === 'p') { e.preventDefault(); openPerform(); }
     else if (e.ctrlKey && k === 'r') { e.preventDefault(); toggleRecord(); }
     else if (e.ctrlKey && k === 'b') { e.preventDefault(); togglePanel('left'); }
     else if (e.ctrlKey && k === 'j') { e.preventDefault(); togglePanel('right'); }
-    else if (k === 'escape') {
-      if (document.body.classList.contains('focus')) toggleFocus(false);
-      else if (!$('#def-card').hidden) $('#def-card').hidden = true;
-      hideCtx();
-    }
+    else if (k === 'escape') closeTopmost();
   });
 
   // ================= Boot =================
@@ -2290,6 +3042,8 @@ Load a beat and let it ride while the night gets colder
     d.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
     d.ui = { open: [], openId: null, ...(data.ui || {}) };
     d.customWords = d.customWords || [];
+    d.dictionary = d.dictionary || [];
+    dictSet = new Set(d.dictionary);
     d.lyrics.forEach((l) => { l.bank = l.bank || []; l.takes = l.takes || []; l.history = l.history || []; l.notes = l.notes || ''; });
     return d;
   }
@@ -2336,6 +3090,7 @@ Load a beat and let it ride while the night gets colder
     const text = await lexP;
     engine.load(text, window.SLANG_RAW);
     for (const w of lib.customWords) engine.addWord(w.word, w.def, w.cat, w.rhymesWith);
+    loadSpelling();
     api.appInfo().then(bindUpdates);
 
     const last = S().reopenLast && lib.ui.openId && lyric(lib.ui.openId);

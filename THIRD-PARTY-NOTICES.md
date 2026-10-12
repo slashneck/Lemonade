@@ -28,8 +28,8 @@ Word frequencies that rank the rhymes come from SUBTLEX-US (Brysbaert and New, 2
 The English word list that keeps names out of the rhyme dictionary comes from `an-array-of-english-words` (MIT
 License, Copyright (c) 2014 Zeke Sikelianos): https://github.com/words/an-array-of-english-words
 
-The word list, frequencies and pronunciations are combined into `data/lexicon.txt` when Lemonade is built. They are not
-modified otherwise.
+The word list, frequencies and pronunciations are combined into `data/lexicon.txt` (rhymes) and `data/spell.txt`
+(spelling) when Lemonade is built. They are not modified otherwise.
 
 ## Online services
 
