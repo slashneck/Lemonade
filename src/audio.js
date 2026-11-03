@@ -7,6 +7,9 @@
     return _ctx;
   };
 
+  // The context as it is: unlike ctx(), this doesn't wake it up when the freestyle game has paused it.
+  ctx.raw = () => _ctx || ctx();
+
   // ---------- Metronome ----------
   // A classic, soft "tick": a very short sine blip with a tiny noise transient.
   let noiseBuf = null;

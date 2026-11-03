@@ -271,6 +271,8 @@ Load a beat and let it ride while the night gets colder
   // ================= Views =================
   function setView(v) {
     if (st.view === 'settings' && v !== 'settings' && mic.monitoring && !rec.on) closeMic();
+    if (st.view === 'freestyle' && v !== 'freestyle') freestyle?.leave();
+    if (st.view === 'freestyle' && v !== 'freestyle') craft?.leaveSprint();
     st.view = v;
     $$('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
     $$('.view').forEach((s) => s.classList.toggle('active', s.dataset.view === v));
@@ -278,6 +280,7 @@ Load a beat and let it ride while the night gets colder
     if (v === 'beats') renderBeats();
     if (v === 'dictionary') renderDictionary();
     if (v === 'archive') renderArchive();
+    if (v === 'freestyle') freestyle.open();
     if (v === 'settings') renderSettings();
     if (v === 'write') { renderTree(); requestAnimationFrame(syncBackdropSize); }
     renderCrumbs();
@@ -292,7 +295,7 @@ Load a beat and let it ride while the night gets colder
   function renderCrumbs() {
     const el = $('#crumbs');
     if (st.view !== 'write') {
-      el.innerHTML = `<span class="cur">${{ beats: 'Beats', dictionary: 'Word library', archive: 'Archive', settings: 'Settings' }[st.view]}</span>`;
+      el.innerHTML = `<span class="cur">${{ beats: 'Beats', dictionary: 'Word library', freestyle: 'Freestyle', archive: 'Archive', settings: 'Settings' }[st.view]}</span>`;
       return;
     }
     const l = current();
@@ -640,6 +643,7 @@ Load a beat and let it ride while the night gets colder
     if (!st.pinned) updateRhymeTarget(true);
     if (l.beatId && beat(l.beatId) && (!player.beat || !player.playing)) loadBeat(beat(l.beatId), false);
     snapshot(l, 'Opened');
+    craft?.renderFlow();
     renderPane();
     persist();
   }
@@ -676,6 +680,7 @@ Load a beat and let it ride while the night gets colder
   const caretMoved = () => {
     st.lastSel = [pad.selectionStart, pad.selectionEnd];
     markCurrentLine();
+    craft?.renderFlow();
     if (spell.skip && (pad.selectionStart < spell.skip[0] || pad.selectionStart > spell.skip[1])) scheduleBackdrop();
     clearTimeout(rhymeTimer);
     rhymeTimer = setTimeout(() => updateRhymeTarget(), 140);
@@ -782,6 +787,7 @@ Load a beat and let it ride while the night gets colder
       return `<div class="bl${i === curLine ? ' cur' : ''}${r.sec ? ' sec' : ''}"><span class="g-num">${num}</span>${body || '​'}${right}</div>`;
     }).join('');
     $('#backdrop-inner').innerHTML = html;
+    craft?.renderFlow();
   }
 
   function markCurrentLine() {
@@ -884,6 +890,8 @@ Load a beat and let it ride while the night gets colder
     st.rhWord = w;
     st.rhSub = sub;
     st.rh = engine.find(w, line);
+    st.rh.mine = craft ? craft.fit(w) : [];
+    st.rh.over = craft ? craft.overuse(w) : null;
     st.chip = null;
     hideDef();
     renderRhymeHead(true);
@@ -934,13 +942,9 @@ Load a beat and let it ride while the night gets colder
       if (animate) { el.classList.remove('swap'); el.offsetWidth; el.classList.add('swap'); }
     }
     $('#rh-pin').classList.toggle('on', st.pinned);
-    const counts = r ? {
-      perfect: r.perfect.length + (r.web_perfect?.length || 0), near: r.near.length + (r.slant?.length || 0) + (r.web_near?.length || 0),
-      multi: r.multi.length, slang: r.slang.length, similar: r.similar?.length || 0,
-    } : {};
     $$('#rh-tabs button').forEach((b) => {
-      const c = counts[b.dataset.tab];
-      b.innerHTML = b.dataset.tab[0].toUpperCase() + b.dataset.tab.slice(1) + (c ? `<span class="cnt">${c > 99 ? '99+' : c}</span>` : '');
+      const c = b.dataset.tab === 'mine' ? r?.mine?.length : 0;
+      b.innerHTML = b.dataset.tab[0].toUpperCase() + b.dataset.tab.slice(1) + (c ? `<span class="cnt">${c}</span>` : '');
     });
     moveInk();
   }
@@ -982,7 +986,10 @@ Load a beat and let it ride while the night gets colder
     if (!r) { body.innerHTML = empty('Start writing. Rhymes for the last word of your bar show up here.'); return; }
     const tab = st.rhymeTab;
     let html = '';
-    if (tab === 'similar') {
+    if (tab === 'mine') {
+      r.mine = craft.fit(r.word);
+      html = craft.mineHtml(r.mine);
+    } else if (tab === 'similar') {
       if (!S().online) html = empty('Similar words come from the online dictionary. Turn it on in Settings.');
       else if (!r.similar) html = `<div class="rh-group"><h4>Similar meaning</h4><span class="loading-dots"><i></i><i></i><i></i></span></div>`;
       else if (r.similar.length) html = `<div class="rh-group"><h4>Words with a similar meaning</h4>${chips(r.similar)}</div>`;
@@ -1005,6 +1012,9 @@ Load a beat and let it ride while the night gets colder
       html += rareGroup(rare);
     }
     if (!html) html = empty(tab === 'multi' ? 'No multisyllable matches. Try a longer line ending.' : `No ${tab} rhymes for “${esc(r.word)}”. Check the other tabs.`);
+    if ((tab === 'perfect' || tab === 'near') && r.over) {
+      html = `<div class="over-note">You've used <b>${esc(r.word)}</b> ${r.over.count} times.${r.over.fresh.length ? ' Rhymes you never used:' : ''}${r.over.fresh.length ? chips(r.over.fresh) : ''}</div>` + html;
+    }
     renderKeyed(body, html);
   }
 
@@ -1546,7 +1556,7 @@ Load a beat and let it ride while the night gets colder
         <span>Record a take</span><span><kbd>Ctrl</kbd> <kbd>R</kbd></span>
         <span>Metronome on / off</span><span><kbd>Ctrl</kbd> <kbd>M</kbd></span>
         <span>Toggle library / side panel</span><span><kbd>Ctrl</kbd> <kbd>B</kbd> · <kbd>Ctrl</kbd> <kbd>J</kbd></span>
-        <span>Switch views</span><span><kbd>Ctrl</kbd> <kbd>1</kbd>-<kbd>4</kbd> · <kbd>Ctrl</kbd> <kbd>,</kbd></span>
+        <span>Switch views</span><span><kbd>Ctrl</kbd> <kbd>1</kbd>-<kbd>5</kbd> · <kbd>Ctrl</kbd> <kbd>,</kbd></span>
         <span>Insert a rhyme</span><span>double-click a rhyme chip</span></div>`, 5)}
       ${section('About', `<div class="set-row"><div class="sr-text"><div class="sr-desc">Free and open source under the GNU GPL 3.0. Pronunciations from the CMU Pronouncing Dictionary, word frequencies from SUBTLEX-US, online rhymes and definitions from the Datamuse API. Electron ${esc(info.electron)}.</div></div><div class="sr-ctl"><button class="btn sm" data-act="repo">${icon('external', 14)}GitHub</button></div></div>`, 7)}`;
     $$('#settings-page input[type=range]').forEach(setRangeFill);
@@ -1859,7 +1869,10 @@ Load a beat and let it ride while the night gets colder
     g.globalAlpha = 1;
   }
 
-  function toggleRecord() { rec.on || rec.counting ? stopRecording() : startRecording(); }
+  function toggleRecord() {
+    if (craft?.mumbling()) return toast('Stop mumbling first', 'mic');
+    rec.on || rec.counting ? stopRecording() : startRecording();
+  }
   async function startRecording() {
     const l = current();
     if (!l) return toast('Open a lyric first', 'x');
@@ -2641,7 +2654,7 @@ Load a beat and let it ride while the night gets colder
       ({ txt: exportLyric, pdf: exportPdf, copy: copyLyric })[b.dataset.ex]();
     };
     $('#add-word').onclick = () => addWordModal();
-    bindNotes(); bindTakes(); bindHistory(); bindMetronome(); bindPerform(); bindWave(); bindSpelling();
+    bindNotes(); bindTakes(); bindHistory(); bindMetronome(); bindPerform(); bindWave(); bindSpelling(); bindFreestyle(); bindCraft();
     setPanels();
   }
 
@@ -2875,6 +2888,7 @@ Load a beat and let it ride while the night gets colder
         }
       }
       const sel = t.selectionStart !== t.selectionEnd;
+      if (t === pad) { items.push({ label: 'Save this bar', icon: 'star', kbd: 'Ctrl+Shift+B', run: saveCurrentBar }); items.push('-'); }
       items.push({ label: 'Cut', icon: 'cut', kbd: 'Ctrl+X', disabled: !sel, run: () => api.edit('cut') });
       items.push({ label: 'Copy', icon: 'copy', kbd: 'Ctrl+C', disabled: !sel, run: () => api.edit('copy') });
       items.push({ label: 'Paste', icon: 'paste', kbd: 'Ctrl+V', run: () => api.edit('paste') });
@@ -2937,6 +2951,78 @@ Load a beat and let it ride while the night gets colder
     });
     const r = await api.exportFolder(cleanName(item.name), files);
     if (r) toast(`Saved ${files.length} lyric${files.length === 1 ? '' : 's'} to ${r}`, 'download');
+  }
+
+  // ================= Freestyle =================
+  let freestyle = null;
+  function bindFreestyle() {
+    freestyle = Freestyle.init({
+      api, engine, $, $$, esc, icon, logo, toast, S, persist, inkSegs, setRangeFill, fmtBpm,
+      getLib: () => lib,
+      busy: () => rec.on || !!rec.counting || !!craft?.mumbling(),
+      openSprint: () => craft.startSprint(),
+      // the beat, the metronome and a level check would all get in the way of the game
+      onStart() {
+        audio.pause();
+        if (player.embed) { stopEmbed(); setPlaying(false); }
+        stopTake();
+        metro.stop();
+        if (mic.stream) closeMic();
+      },
+      onEnd() { metroSync(); },
+      songWords() {
+        const l = current();
+        if (!l) return [];
+        const ends = l.body.split('\n').filter((x) => !SECTION_RE.test(x)).map(lastWordOf).filter(Boolean);
+        const bank = (l.bank || []).map(lastWordOf).filter(Boolean);
+        return [...new Set([...ends, ...bank])];
+      },
+      saveLyric(title, body) {
+        const cur = current();
+        const projectId = (cur && lyricVisible(cur) && cur.projectId) || lib.projects.find((p) => !p.archived)?.id;
+        if (!projectId) return toast('Make a project first', 'x');
+        const l = { id: uid(), projectId, folderId: null, title, body, beatId: null, created: now(), updated: now(), archived: false, bank: [], takes: [], history: [], notes: '' };
+        lib.lyrics.push(l);
+        toggleOpen(projectId, true);
+        persist();
+        setView('write');
+        openLyric(l.id);
+      },
+    });
+  }
+
+  // ================= Writing helpers =================
+  let craft = null;
+  function saveCurrentBar() {
+    const l = current();
+    if (!l) return;
+    const lines = pad.value.split('\n');
+    const sel = pad.value.slice(pad.selectionStart, pad.selectionEnd).trim();
+    const line = sel || lines[lineIndexAt(pad.selectionStart)] || '';
+    if (!line.trim() || SECTION_RE.test(line)) return toast('Put the cursor on a bar first', 'star');
+    craft.saveBar(line, l.title || 'Untitled');
+  }
+  function bindCraft() {
+    craft = Craft.init({
+      engine, pad, audio, player, metro, $, esc, icon, toast, S, persist, uid, now,
+      getDefs, stopTake, playTake, openMic, closeMic, metroSync, lineIndexAt,
+      getLib: () => lib,
+      current,
+      busy: () => rec.on || !!rec.counting,
+      spellKnown: (w) => (spell.words ? knownWord(w) : engine.has(w)),
+      backToFreestyle: () => freestyle.open(),
+      async addTake(l, blob, { label, duration, beatId, beatOffset }) {
+        const file = await api.saveTake(await blob.arrayBuffer());
+        l.takes = l.takes || [];
+        const n = l.takes.filter((t) => t.name.startsWith(label)).length + 1;
+        const take = { id: uid(), name: `${label} ${n}`, file, duration, created: now(), beatId, beatOffset };
+        l.takes.unshift(take);
+        persist();
+        if (st.pane === 'takes') renderTakes();
+        return take;
+      },
+    });
+    craft.bindMine($('#rh-body'), () => st.rh?.mine || [], () => renderRhymes());
   }
 
   // ================= Updates =================
@@ -3018,6 +3104,8 @@ Load a beat and let it ride while the night gets colder
   }
   document.addEventListener('keydown', (e) => {
     if (performKeys(e)) return;
+    if (freestyle?.keys(e)) return;
+    if (craft?.keys(e)) return;
     const k = e.key.toLowerCase();
     if (e.ctrlKey && !e.shiftKey && k === 'n') { e.preventDefault(); newLyric(); }
     else if (e.ctrlKey && k === 's') { e.preventDefault(); dirty = true; flush().then(() => toast('Saved')); }
@@ -3026,12 +3114,13 @@ Load a beat and let it ride while the night gets colder
     else if (e.ctrlKey && k === 'e') { e.preventDefault(); exportLyric(); }
     else if (e.ctrlKey && e.shiftKey && k === 'f') { e.preventDefault(); toggleFocus(); }
     else if (e.ctrlKey && e.code === 'Space') { e.preventDefault(); togglePlay(); }
-    else if (e.ctrlKey && ['1', '2', '3', '4'].includes(k)) { e.preventDefault(); setView(['write', 'beats', 'dictionary', 'archive'][+k - 1]); }
+    else if (e.ctrlKey && ['1', '2', '3', '4', '5'].includes(k)) { e.preventDefault(); setView(['write', 'beats', 'dictionary', 'freestyle', 'archive'][+k - 1]); }
+    else if (e.ctrlKey && e.shiftKey && k === 'b') { e.preventDefault(); saveCurrentBar(); }
     else if (e.ctrlKey && k === ',') { e.preventDefault(); setView('settings'); }
     else if (e.ctrlKey && k === 'm') { e.preventDefault(); metroToggle(); toast(st.metroOn ? `Metronome on · ${fmtBpm(metro.bpm)} BPM${syncBeat() ? ', locked to the beat' : ''}` : 'Metronome off', 'metronome'); }
     else if (e.ctrlKey && k === 'p') { e.preventDefault(); openPerform(); }
     else if (e.ctrlKey && k === 'r') { e.preventDefault(); toggleRecord(); }
-    else if (e.ctrlKey && k === 'b') { e.preventDefault(); togglePanel('left'); }
+    else if (e.ctrlKey && !e.shiftKey && k === 'b') { e.preventDefault(); togglePanel('left'); }
     else if (e.ctrlKey && k === 'j') { e.preventDefault(); togglePanel('right'); }
     else if (k === 'escape') closeTopmost();
   });
@@ -3043,6 +3132,11 @@ Load a beat and let it ride while the night gets colder
     d.ui = { open: [], openId: null, ...(data.ui || {}) };
     d.customWords = d.customWords || [];
     d.dictionary = d.dictionary || [];
+    d.vault = d.vault || [];
+    // ghost bars only ever existed in a test build: clear them out of any lyric that still has them
+    const ghost = /^\s*⟦\d.*⟧\s*$/;
+    const unghost = (body) => (body || '').split('\n').filter((x) => !ghost.test(x)).join('\n');
+    d.lyrics.forEach((l) => { l.body = unghost(l.body); (l.history || []).forEach((h) => { h.body = unghost(h.body); }); delete l.guides; delete l.pin; });
     dictSet = new Set(d.dictionary);
     d.lyrics.forEach((l) => { l.bank = l.bank || []; l.takes = l.takes || []; l.history = l.history || []; l.notes = l.notes || ''; });
     return d;

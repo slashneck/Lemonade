@@ -52,6 +52,15 @@ the beat's grid, so it starts, stops and loops together with it.
 one, watch the level meter and count in a bar before you start. Export a take as WAV, the vocal alone or mixed with the
 beat.
 
+**Freestyle trainer.** A metronome or one of your own beats, and a word to land on beat 4 of every bar. Pick the topic, level
+and rhyme scheme, or train on the rhymes of the song you're writing. Turn on the mic and your landings get timed to the
+millisecond on your own PC, with streaks and a score. Nothing is recorded. It hears when you land, not which word you said. There's a 60 second rhyme sprint in there too.
+
+**Help that never writes for you.** The Mine tab next to your rhymes shows your own bars that rhyme with the one you're on,
+from your other songs and the bars you saved with Ctrl+Shift+B. Lean on a word too much and the rhyme panel tells you, with
+rhymes you've never used. Press Mumble, rap a flow with no words, and a guide above the lyric shows where your syllables
+fell for the bar you're on.
+
 **Perform mode.** A full screen teleprompter that moves from bar to bar in time with the beat or the metronome, with a
 count-in. The metronome is a soft classic click with an accented first beat.
 
@@ -85,6 +94,7 @@ You need Windows 10 (version 1903 or newer) or Windows 11, 64 bit.
 | Focus mode | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd> |
 | Search lyrics | <kbd>Ctrl</kbd> + <kbd>F</kbd> |
 | Export | <kbd>Ctrl</kbd> + <kbd>E</kbd> |
+| Save a bar | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd> |
 | Hide the library or the side panel | <kbd>Ctrl</kbd> + <kbd>B</kbd>, <kbd>Ctrl</kbd> + <kbd>J</kbd> |
 | Close whatever is on top | <kbd>Esc</kbd> |
 

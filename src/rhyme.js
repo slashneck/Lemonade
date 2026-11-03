@@ -1,12 +1,13 @@
 // Phonetic rhyme engine built on CMU ARPAbet pronunciations.
 (() => {
   const isVowel = (ph) => /\d$/.test(ph);
-  // The sound used for matching: no stress mark, and "caught" and "cot" (AO, AA) count as one vowel, the way most
-  // American rap says them, so gone rhymes with on.
-  const strip = (ph) => { const s = ph.replace(/\d$/, ''); return s === 'AO' ? 'AA' : s; };
+  // The sounds used for matching: no stress marks, and "caught" and "cot" (AO, AA) count as one vowel, the way most
+  // American rap says them, so gone rhymes with on. Before an R they stay apart: more doesn't rhyme with car.
+  const sounds = (ph) => ph.map((x, i) => { const s = x.replace(/\d$/, ''); return s === 'AO' && ph[i + 1] !== 'R' ? 'AA' : s; });
+  const vowelSounds = (ph) => sounds(ph).filter((_, i) => isVowel(ph[i]));
 
   // Vowel families for slant rhymes: close enough to rhyme in a verse (money and body, fit and feet).
-  const VFAM = { AA: 'o', AH: 'o', IY: 'i', IH: 'i', EH: 'e', AE: 'e', UW: 'u', UH: 'u', EY: 'ey', AY: 'ay', OW: 'ow', AW: 'aw', OY: 'oy', ER: 'er' };
+  const VFAM = { AA: 'o', AO: 'o', AH: 'o', IY: 'i', IH: 'i', EH: 'e', AE: 'e', UW: 'u', UH: 'u', EY: 'ey', AY: 'ay', OW: 'ow', AW: 'aw', OY: 'oy', ER: 'er' };
 
   // Final-consonant families: words ending in the same family make good slant rhymes.
   const FAMILY = {
@@ -235,14 +236,14 @@
       });
       return is >= 0 ? is : Math.max(iv, 0);
     }
-    perfectKey(ph) { return ph.slice(this.stressIndex(ph)).map(strip).join(' '); }
-    vowelKey(ph) { return ph.slice(this.stressIndex(ph)).filter(isVowel).map(strip).join(' '); }
+    perfectKey(ph) { return sounds(ph.slice(this.stressIndex(ph))).join(' '); }
+    vowelKey(ph) { return vowelSounds(ph.slice(this.stressIndex(ph))).join(' '); }
     tailVowels(ph, n) {
-      const v = ph.filter(isVowel).map(strip);
+      const v = vowelSounds(ph);
       return v.length >= n ? v.slice(-n).join(' ') : '';
     }
     familyKey(ph) {
-      return ph.slice(this.stressIndex(ph)).filter(isVowel).map((v) => VFAM[strip(v)] || strip(v)).join(' ') + '|' + this.finalFamily(ph);
+      return vowelSounds(ph.slice(this.stressIndex(ph))).map((v) => VFAM[v] || v).join(' ') + '|' + this.finalFamily(ph);
     }
     finalFamily(ph) {
       const last = ph[ph.length - 1];

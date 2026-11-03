@@ -29,7 +29,8 @@
         <button class="rail-btn active" data-view="write" title="Write (Ctrl+1)"></button>
         <button class="rail-btn" data-view="beats" title="Beats (Ctrl+2)"></button>
         <button class="rail-btn" data-view="dictionary" title="Word library (Ctrl+3)"></button>
-        <button class="rail-btn" data-view="archive" title="Archive (Ctrl+4)"></button>
+        <button class="rail-btn" data-view="freestyle" title="Freestyle (Ctrl+4)"></button>
+        <button class="rail-btn" data-view="archive" title="Archive (Ctrl+5)"></button>
         <div class="rail-spacer"></div>
         <button class="rail-btn" data-view="settings" title="Settings (Ctrl+,)"></button>
         <div class="rail-indicator" id="rail-indicator"></div>
@@ -97,6 +98,7 @@
                 </div>
               </div>
               <div class="ed-meta" id="ed-meta"></div>
+              <div class="flow-strip" id="flow-strip" hidden></div>
               <div id="editor">
                 <div id="backdrop"><div id="backdrop-inner"></div></div>
                 <textarea id="pad" spellcheck="false" placeholder="[Verse 1]&#10;Start writing your bars here…"></textarea>
@@ -128,6 +130,7 @@
                 <button data-tab="multi">Multi</button>
                 <button data-tab="slang">Slang</button>
                 <button data-tab="similar">Similar</button>
+                <button data-tab="mine">Mine</button>
                 <span class="tab-ink"></span>
               </div>
             </div>
@@ -160,6 +163,8 @@
                   </div>
                   <canvas id="rec-meter" width="160" height="36"></canvas>
                 </div>
+                <div class="mum-row"><div><b>No words yet?</b><span>Mumble a flow over the beat. You get a guide of where your syllables fell.</span></div>
+                  <button class="btn sm" id="mumble-btn"><span class="i" data-icon="mic"></span>Mumble</button></div>
                 <div class="mic-box">
                   <div class="mic-top"><span class="i" data-icon="mic"></span><span class="mic-name">Default microphone</span>
                     <button class="icon-btn xs" id="mic-settings" title="Microphone settings"><span class="i" data-icon="settings"></span></button></div>
@@ -230,6 +235,10 @@
         </section>
 
         <!-- ARCHIVE -->
+        <section class="view" data-view="freestyle">
+          <div class="page narrow" id="fs-page"></div>
+        </section>
+
         <section class="view" data-view="archive">
           <div class="page">
             <div class="page-head">
@@ -313,6 +322,8 @@
   <script src="rhyme.js"></script>
   <script src="icons.js"></script>
   <script src="audio.js"></script>
+  <script src="freestyle.js"></script>
+  <script src="craft.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
